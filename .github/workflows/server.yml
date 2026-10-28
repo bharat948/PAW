@@ -1,0 +1,44 @@
+name: server-ci
+on:
+  pull_request:
+    paths: ['paw-server/**', '.github/workflows/server.yml']
+  push:
+    branches: [main]
+    paths: ['paw-server/**', '.github/workflows/server.yml']
+permissions:
+  contents: read
+concurrency:
+  group: server-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: paw-server
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: paw
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: paw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paw" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      PAW_ENV: ci
+      PAW_DATABASE_URL: postgresql://paw:ci_only@localhost:5432/paw
+      PAW_TEST_DATABASE_URL: postgresql://paw:ci_only@localhost:5432/paw
+    steps:
+      # TODO(pin): replace tags with full commit SHAs before 001D (R02 requires pinned actions).
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.10.6"
+      - run: make install
+      - run: make lint
+      - run: make typecheck
+      - run: make test
+      - run: uv run pytest -m integration
+      - run: docker build -t paw-server:ci .
