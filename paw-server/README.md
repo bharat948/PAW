@@ -29,7 +29,7 @@ make run           # API with reload; needs PAW_DATABASE_URL (see .env.example)
 Integration tests (real pgvector Postgres, throwaway database per test):
 
 ```
-docker compose -f compose.yaml -f compose.dev-db.yaml up -d db
+docker compose -f compose.yaml -f compose.dev.yaml up -d db
 make test-integration
 ```
 

@@ -1,8 +1,0 @@
-# Optional overlay: expose Postgres on localhost:54329 for `make test-integration`.
-# Docker cannot publish ports from an `internal` network, so db also joins a routable one.
-services:
-  db:
-    ports: ["127.0.0.1:54329:5432"]
-    networks: [backend, devdb]
-networks:
-  devdb: {}

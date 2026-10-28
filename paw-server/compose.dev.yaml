@@ -1,0 +1,11 @@
+# Dev overlay: publish Postgres and the S3 store on localhost so the API/worker/tests can run on the host.
+# Docker cannot publish ports from an `internal` network, so these services also join a routable one.
+services:
+  db:
+    ports: ["127.0.0.1:5432:5432"]
+    networks: [backend, hostnet]
+  s3:
+    ports: ["127.0.0.1:9000:9000"]
+    networks: [backend, hostnet]
+networks:
+  hostnet: {}
