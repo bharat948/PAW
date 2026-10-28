@@ -62,9 +62,10 @@ class OpenAICompatEmbedder:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         try:
-            r = self._client.post(
-                "/embeddings", json={"model": self.model, "input": texts, "dimensions": self.dim}
-            )
+            payload: dict[str, object] = {"model": self.model, "input": texts}
+            if self.model.startswith("text-embedding-3"):  # only v3 models accept `dimensions`
+                payload["dimensions"] = self.dim
+            r = self._client.post("/embeddings", json=payload)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise TransientIngestError("embedding provider unreachable") from exc
         if r.status_code == 429 or r.status_code >= 500:

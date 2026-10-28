@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test'
 const down = process.env.PAW_EXPECT === 'down'
 
 test(down ? 'db down shows safe unavailable state' : 'stack is ready end to end', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/#/status')
   if (down) {
     await expect(page.getByRole('alert')).toContainText('database is not ready')
     await expect(page.getByRole('alert')).toContainText('Reference:')

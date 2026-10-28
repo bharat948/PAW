@@ -1,6 +1,15 @@
 import type { ReactNode } from 'react'
+import { useAuth } from '../auth'
+import type { Route } from '../hooks/useHashRoute'
 
-export function Shell({ children }: { children: ReactNode }) {
+const LINKS: { route: Route; label: string; authed: boolean }[] = [
+  { route: 'documents', label: 'Documents', authed: true },
+  { route: 'search', label: 'Search', authed: true },
+  { route: 'status', label: 'Status', authed: false },
+]
+
+export function Shell({ route, children }: { route: Route; children: ReactNode }) {
+  const { signedIn, signOut } = useAuth()
   return (
     <>
       <a className="skip-link" href="#main">
@@ -10,13 +19,20 @@ export function Shell({ children }: { children: ReactNode }) {
         <span className="brand">PAW</span>
         <nav aria-label="Primary">
           <ul>
-            <li>
-              <a href="#main" aria-current="page">
-                Status
-              </a>
-            </li>
+            {LINKS.filter((l) => signedIn || !l.authed).map((l) => (
+              <li key={l.route}>
+                <a href={`#/${l.route}`} aria-current={route === l.route ? 'page' : undefined}>
+                  {l.label}
+                </a>
+              </li>
+            ))}
           </ul>
         </nav>
+        {signedIn && (
+          <button type="button" className="link-btn" onClick={signOut}>
+            Sign out
+          </button>
+        )}
       </header>
       <main id="main" tabIndex={-1}>
         {children}

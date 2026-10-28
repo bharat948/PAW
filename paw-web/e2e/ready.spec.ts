@@ -4,7 +4,7 @@ const READY = '**/ready'
 
 test('shows ready state', async ({ page }) => {
   await page.route(READY, (r) => r.fulfill({ json: { status: 'ready' } }))
-  await page.goto('/')
+  await page.goto('/#/status')
   await expect(page.getByText('Database: ready')).toBeVisible()
 })
 
@@ -18,7 +18,7 @@ test('shows a safe service-unavailable state on 503', async ({ page }) => {
       },
     }),
   )
-  await page.goto('/')
+  await page.goto('/#/status')
   const alert = page.getByRole('alert')
   await expect(alert).toContainText('Service unavailable')
   await expect(alert).not.toContainText('internal detail')

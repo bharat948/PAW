@@ -92,7 +92,8 @@ class Env:
 
     def client(self, **kw) -> TestClient:
         c = TestClient(
-            create_app(self.settings(**kw), store=self.store), raise_server_exceptions=False
+            create_app(self.settings(**kw), store=self.store, embedder=self.embedder),
+            raise_server_exceptions=False,
         )
         c.__enter__()
         return c

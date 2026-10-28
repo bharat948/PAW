@@ -7,6 +7,7 @@ afterEach(() => vi.restoreAllMocks())
 
 it('shows ready state', async () => {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ status: 'ready' }))
+  window.location.hash = '#/status'
   render(<App />)
   expect(screen.getByRole('status')).toHaveTextContent(/checking/i)
   expect(await screen.findByText(/Database: ready/)).toBeInTheDocument()
@@ -21,6 +22,7 @@ it('shows a safe unavailable state on 503 and retries', async () => {
     .spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(Response.json(env, { status: 503 }))
     .mockResolvedValueOnce(Response.json({ status: 'ready' }))
+  window.location.hash = '#/status'
   render(<App />)
   expect(await screen.findByRole('alert')).toHaveTextContent(/database is not ready/i)
   expect(screen.getByText(/abc123/)).toBeInTheDocument()
@@ -31,6 +33,7 @@ it('shows a safe unavailable state on 503 and retries', async () => {
 
 it('shows unreachable state when the network fails', async () => {
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('boom'))
+  window.location.hash = '#/status'
   render(<App />)
   expect(await screen.findByRole('alert')).toHaveTextContent(/could not be reached/i)
 })

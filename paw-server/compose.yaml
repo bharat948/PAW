@@ -11,6 +11,11 @@ x-api-env: &api-env
   PAW_S3_ACCESS_KEY: paw_local_only
   PAW_S3_SECRET_KEY: paw_local_only_secret
   PAW_S3_CREATE_BUCKET: "true"
+  # Embeddings: defaults to the free deterministic fake. To use OpenAI, put these in paw-server/.env
+  # (gitignored): PAW_EMBEDDING_PROVIDER=openai, PAW_EMBEDDING_MODEL=text-embedding-3-small, PAW_EMBEDDING_API_KEY=...
+  PAW_EMBEDDING_PROVIDER: ${PAW_EMBEDDING_PROVIDER:-fake}
+  PAW_EMBEDDING_MODEL: ${PAW_EMBEDDING_MODEL:-fake-hash-v1}
+  PAW_EMBEDDING_API_KEY: ${PAW_EMBEDDING_API_KEY:-}
   PAW_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
 
 services:

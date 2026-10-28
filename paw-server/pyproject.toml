@@ -46,7 +46,10 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: needs a real PostgreSQL (PAW_TEST_DATABASE_URL)"]
+markers = [
+  "integration: needs a real PostgreSQL (PAW_TEST_DATABASE_URL)",
+  "live: calls a real embedding provider (PAW_EMBEDDING_API_KEY); costs money, never run in CI by default",
+]
 
 [[tool.mypy.overrides]]
 module = ["boto3.*", "botocore.*"]

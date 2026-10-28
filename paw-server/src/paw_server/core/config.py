@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=64, ge=1)
     embedding_daily_token_budget: int = Field(default=2_000_000, ge=0)
 
+    # retrieval
+    search_rate_limit_per_min: int = Field(default=60, ge=1)
+    search_candidates: int = Field(default=50, ge=1, le=200)
+    vector_max_distance: float = Field(default=0.75, gt=0, le=2)  # cosine; drops irrelevant vectors
+    rrf_k: int = Field(default=60, ge=1)
+    excerpt_chars: int = Field(default=500, ge=50)
+
     # worker / job runner (D005)
     worker_poll_s: float = Field(default=1.0, gt=0)
     lease_seconds: int = Field(default=60, ge=5)

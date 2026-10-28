@@ -6,9 +6,9 @@ lint:
 typecheck:
 	uv run mypy
 test:
-	uv run pytest -m "not integration"
+	uv run pytest -m "not integration and not live"
 test-integration:  # needs: docker compose -f compose.yaml -f compose.dev-db.yaml up -d db
-	PAW_TEST_DATABASE_URL=postgresql://paw:paw_local_only@localhost:54329/paw uv run pytest -m integration
+	PAW_TEST_DATABASE_URL=postgresql://paw:paw_local_only@localhost:54329/paw uv run pytest -m "integration and not live"
 check: lint typecheck test
 migrate:
 	uv run alembic -c alembic.ini upgrade head

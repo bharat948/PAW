@@ -44,7 +44,9 @@ class ApiError(Exception):
         code: str | None = None,
         message: str | None = None,
         details: list[dict[str, Any]] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
+        self.headers = headers
         self.status = status
         d_code, d_msg, _ = _CODES.get(status, _CODES[500])
         self.code = code or d_code
@@ -53,7 +55,11 @@ class ApiError(Exception):
 
 
 def _envelope(
-    status: int, code: str, message: str, details: list[dict[str, Any]] | None = None
+    status: int,
+    code: str,
+    message: str,
+    details: list[dict[str, Any]] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     retryable = _CODES.get(status, _CODES[500])[2]
     body = ErrorEnvelope(
@@ -63,13 +69,15 @@ def _envelope(
         retryable=retryable,
         details=details,
     )
-    return JSONResponse(status_code=status, content=body.model_dump(exclude_none=True))
+    return JSONResponse(
+        status_code=status, content=body.model_dump(exclude_none=True), headers=headers
+    )
 
 
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api(_: Request, exc: ApiError) -> JSONResponse:
-        return _envelope(exc.status, exc.code, exc.message, exc.details)
+        return _envelope(exc.status, exc.code, exc.message, exc.details, exc.headers)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_: Request, exc: StarletteHTTPException) -> JSONResponse:

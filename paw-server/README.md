@@ -75,4 +75,40 @@ curl -H "Authorization: Bearer $T" localhost:8000/v1/documents/<id>/chunks      
 - **Scale out:** run more worker replicas (`docker compose up -d --scale worker=3`).
 - **Local object store:** SeaweedFS in Compose (`s3` service); production uses any S3-compatible bucket via `PAW_S3_*`.
 
-Not yet (later substories): hybrid search endpoint (001C), rate limiting, retention/deletion, restricted DB roles (001D).
+
+
+## Retrieval (PAW-001C)
+
+```
+curl -H "Authorization: Bearer $T" -H 'content-type: application/json' \
+  -d '{"query":"quarterly revenue Helsinki","top_k":5}' localhost:8000/v1/retrieval/search
+curl -H "Authorization: Bearer $T" localhost:8000/v1/chunks/<chunk_id>                  # resolve a source reference
+curl -H "Authorization: Bearer $T" -OJ localhost:8000/v1/documents/<id>/original        # exact original bytes
+```
+
+- **Hybrid:** Postgres full-text (strict AND, relaxing to OR when nothing matches) + pgvector cosine, fused with
+  weighted reciprocal-rank fusion. Fusion configs are versioned (`fusion_version`, e.g. `rrf-1`); ties break
+  deterministically. Vector hits beyond `PAW_VECTOR_MAX_DISTANCE` (0.75) are dropped so no-match queries return `[]`.
+- **Scoping:** workspace and "current version only" filters run in SQL before content is returned; foreign or
+  guessed IDs get the same 404 as missing ones.
+- **Degradation:** if the embedding provider fails or the budget is spent, search still answers from keywords and
+  says so in `meta.degraded`. Scores are rank-derived, never probabilities.
+- **Limits:** query 1-1000 chars, `top_k` 1-50, 60 searches/min per actor (in-process; move to a shared store before
+  running multiple API replicas). Telemetry stores a query *hash*, length, latency and result ids; never the text.
+- **Eval:** `tests/eval_corpus.py` + `tests/test_retrieval_integration.py` (keyword, hybrid, markup, adversarial,
+  no-match, cross-workspace, duplicate). Re-run after changing chunking or the embedding model. The opt-in live
+  quality smoke (`pytest -m live`, needs `PAW_EMBEDDING_API_KEY`) calls the real provider.
+
+## Using OpenAI embeddings
+
+Put these in `paw-server/.env` (gitignored; never commit or paste keys in chat), then `docker compose up -d`:
+
+```
+PAW_EMBEDDING_PROVIDER=openai
+PAW_EMBEDDING_MODEL=text-embedding-3-small
+PAW_EMBEDDING_API_KEY=sk-...
+```
+
+Changing the model changes the processing config, so re-upload documents to get OpenAI-embedded versions
+(old versions keep their fake vectors and are keyword-searchable only). Set a spending cap in the OpenAI
+dashboard too; `PAW_EMBEDDING_DAILY_TOKEN_BUDGET` is an app-level guard.

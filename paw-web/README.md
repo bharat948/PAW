@@ -1,7 +1,7 @@
 # paw-web
 
 React + Vite + TypeScript browser app for PAW (spec: PAW-001, substory 001A).
-Currently a responsive, accessible shell that calls the API's `/ready` and shows backend/database status.
+Sign in with the owner token, upload documents (progress + durable status), search with source references, and a status page.
 
 ## Run
 
@@ -21,7 +21,8 @@ npm run dev
 ```
 npm run check      # lint + typecheck + unit tests
 npm run build
-npx playwright install chromium && npm run test:e2e   # desktop + mobile viewports
+npx playwright install chromium && npm run test:e2e   # mocked API, desktop + mobile
+npm run test:live  # real browser vs the running stack (`make up`): upload -> status -> search -> source
 ```
 
 ## Notes
