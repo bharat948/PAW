@@ -12,7 +12,11 @@ def test_database_url_required(monkeypatch):
 
 def test_production_rejects_local_credentials():
     with pytest.raises(ValidationError):
-        Settings(database_url="postgresql://paw:paw_local_only@db/paw", env="production")  # type: ignore[arg-type]
+        Settings(
+            database_url="postgresql://paw:paw_local_only@db/paw",
+            owner_token="x" * 20,
+            env="production",
+        )  # type: ignore[arg-type]
 
 
 def test_production_rejects_http_cors():
@@ -24,11 +28,14 @@ def test_production_rejects_http_cors():
 
 def test_pool_bounds():
     with pytest.raises(ValidationError):
-        Settings(database_url="postgresql://u:p@db/p", db_pool_min=5, db_pool_max=2)
+        Settings(
+            database_url="postgresql://u:p@db/p", owner_token="x" * 20, db_pool_min=5, db_pool_max=2
+        )
 
 
 def test_cors_origins_accepts_csv_and_json(monkeypatch):
     monkeypatch.setenv("PAW_DATABASE_URL", "postgresql://u:p@db/p")
+    monkeypatch.setenv("PAW_OWNER_TOKEN", "x" * 20)
     monkeypatch.setenv("PAW_CORS_ORIGINS", "http://a, http://b")
     assert Settings(_env_file=None).cors_origins == ["http://a", "http://b"]
     monkeypatch.setenv("PAW_CORS_ORIGINS", '["http://c"]')

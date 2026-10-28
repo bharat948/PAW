@@ -6,6 +6,11 @@ x-api-env: &api-env
   PAW_ENV: local
   PAW_DATABASE_URL: postgresql://paw:paw_local_only@db:5432/paw
   PAW_LOG_LEVEL: INFO
+  PAW_OWNER_TOKEN: paw_local_only_owner_token
+  PAW_S3_ENDPOINT_URL: http://s3:9000
+  PAW_S3_ACCESS_KEY: paw_local_only
+  PAW_S3_SECRET_KEY: paw_local_only_secret
+  PAW_S3_CREATE_BUCKET: "true"
   PAW_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
 
 services:
@@ -24,6 +29,23 @@ services:
       timeout: 3s
       retries: 20
 
+  # S3-compatible object store for local dev (SeaweedFS; MinIO no longer publishes images).
+  # Production uses a managed S3-compatible bucket (e.g. Cloudflare R2) via the same PAW_S3_* vars.
+  s3:
+    image: chrislusf/seaweedfs:4.50
+    command: ["server", "-dir=/data", "-s3", "-s3.port=9000", "-ip.bind=0.0.0.0"]
+    environment:
+      AWS_ACCESS_KEY_ID: paw_local_only
+      AWS_SECRET_ACCESS_KEY: paw_local_only_secret
+    volumes:
+      - s3data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null && wget -q --spider http://127.0.0.1:9000/ || wget -S -qO- http://127.0.0.1:9000/ 2>&1 | grep -q HTTP"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
   migrate:
     build: .
     command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
@@ -38,6 +60,7 @@ services:
     environment: *api-env
     depends_on:
       migrate: {condition: service_completed_successfully}
+      s3: {condition: service_healthy}
     ports: ["127.0.0.1:8000:8000"]
     networks: [backend, frontend]
     healthcheck:
@@ -52,6 +75,7 @@ services:
     environment: *api-env
     depends_on:
       migrate: {condition: service_completed_successfully}
+      s3: {condition: service_healthy}
     networks: [backend]
 
   web:
@@ -70,3 +94,4 @@ networks:
 
 volumes:
   pgdata: {}
+  s3data: {}

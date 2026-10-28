@@ -11,7 +11,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_upgrade_from_empty_is_idempotent_and_ready(db_url):
-    pool = create_pool(Settings(database_url=db_url))  # type: ignore[arg-type]
+    pool = create_pool(Settings(database_url=db_url, owner_token="t" * 20))  # type: ignore[arg-type]
     assert check_ready(pool).failed_check == "migrations"  # empty DB: not migrated
 
     cfg = alembic_config(db_url)
@@ -30,6 +30,6 @@ def test_ready_fails_on_incompatible_migration(db_url):
     command.upgrade(alembic_config(db_url), "head")
     with psycopg.connect(db_url, autocommit=True) as c:
         c.execute("UPDATE alembic_version SET version_num='9999'")
-    pool = create_pool(Settings(database_url=db_url))  # type: ignore[arg-type]
+    pool = create_pool(Settings(database_url=db_url, owner_token="t" * 20))  # type: ignore[arg-type]
     assert check_ready(pool).failed_check == "migrations"
     pool.close()
