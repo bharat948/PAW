@@ -1,0 +1,14 @@
+# Spike S0 only: one Hermes container for the contract tests. NOT the production topology (see PAW-002 spec 7.2).
+#   docker compose --env-file /path/outside/repo/s0.env -f deploy/hermes/compose.s0.yaml up -d
+# Secrets come from the env file, never the image. The API is published on loopback only.
+# No named volume on HERMES_HOME: the install lives inside it, and recreating the container is the "state wiped" test.
+name: paw-hermes-s0
+services:
+  hermes:
+    image: paw-hermes:s0
+    environment:
+      API_SERVER_KEY: ${API_SERVER_KEY:?set API_SERVER_KEY (>= 32 random chars)}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      HERMES_CONFIG_SET: ${HERMES_CONFIG_SET:-}
+    ports: ["127.0.0.1:8642:8642"]
+    restart: "no"

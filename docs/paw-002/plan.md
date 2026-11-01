@@ -1,6 +1,7 @@
 # PAW-002 development plan and S0 status
 
 Spec: `PAW_002_Admin_Hermes_Harness_Requirements_v2.docx` (v2.0, 2026-10-29). Branch: `paw-002-admin-hermes`.
+Per-phase engineering plans: [phase-plans.md](phase-plans.md).
 Audience: Bharat (owner) and whoever runs the spike. Written 2026-11-02.
 
 ## 1. Where we are
@@ -35,15 +36,33 @@ thin, and a few things the spec does not account for.
 | Requires a model with at least 64k context | Constrains O4 (model choice) |
 | Other endpoints exist (`/steer`, `/resolve-unknown`, `/v1/chat/completions`, `/v1/responses`) | The runtime listener must stay private; none of these may be reachable from outside paw-server |
 
-## 3. What I need from you to run S0 for real
+## 3. Inputs for S0
 
-1. **OpenRouter API key with a hard credit limit** (spec D211, prerequisite). A small limit, e.g. $5, is enough for S0.
-2. **Permission to install Hermès** in an isolated container (not on your host). That means executing the vendor install script inside a throwaway image.
-3. Which **model** to try first (O4). It must have at least 64k context. Cheapest sensible choice is fine for the spike.
+**Decision (2026-11-02, owner): use the existing OpenAI key for now instead of OpenRouter.** This deviates from spec D211
+("proposed"), so record it as ADR-203 once S0 confirms it works:
 
-Decisions (spec section 24, with my recommendation): O1 Gmail after M2; O2 no self-editing profile in Story 2;
-O3 auto-continue after approval, default yes; O4 pick after S0 measures cost, $0.50 per run and $3 per day; O5 hosting
-(see dependency below).
+| Spec (OpenRouter) | With OpenAI direct |
+|---|---|
+| Hermès provider: OpenRouter | `openai-api` (key `OPENAI_API_KEY` in `HERMES_HOME/.env`; exact `config.yaml` keys to be proven in S0) |
+| Egress allow-list: `openrouter.ai` | `api.openai.com` |
+| Hard credit limit on the key is the final cost backstop | OpenAI has no per-key hard cap by default: set a **monthly budget limit on the OpenAI project** and use a **separate project key for Hermès**, not the PAW embeddings key. Until then the only cap is the prepaid balance |
+| Model choice | any OpenAI chat model with at least 64k context (gpt-4o-mini has 128k) |
+
+Interim state: S0 may reuse the key in `paw-server/.env` on the owner's laptop only. Do not copy it into CI or the home install;
+create a dedicated project key first.
+
+Still needed from the owner: a model choice if not `gpt-4o-mini` (O4), and an OpenAI project budget limit.
+
+**Install safety (done 2026-11-02):** the vendor installer was downloaded and read before use. It clones
+`github.com/NousResearch/hermes-agent`, fetches a pinned `uv`, installs dependencies, writes only a local install receipt
+(it sends nothing), and supports `--commit`, `--hermes-home` and `--non-interactive`. Hermès itself has a separate "shared
+metrics" feature that reports a receipt on a later start when collection is on: **disable it and verify (Q11)**.
+The wrapper image `deploy/hermes/` verifies the script by sha256 and pins Hermès to an exact commit.
+**Pin correction (2026-11-02):** the newest release tag (`v2026.9.24`) does not contain the `pm/` directory that the current
+installer requires, so the first build failed. The image is pinned to `main` commit
+`c7da41dd522dc19cc08bbfcfa69d4b078224b45d` (2026-11-01), which has it. This means S0 runs an **unreleased** Hermès commit;
+revisit when a tagged release includes `pm/`. The first clone from this network took about 5 minutes and one attempt hit a
+transient "RPC failed" error, so re-running a failed build is reasonable.
 
 ## 4. Deviations to decide before 002A (proposed, not yet made)
 
