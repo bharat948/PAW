@@ -47,13 +47,15 @@ Nothing below is built unless stated; S0 has not been run against a real Hermès
 | Q2 statelessness | `test_q2_no_hidden_history_between_runs` + container-recreate variant | no leakage between runs without session key | leakage → wipe `HERMES_HOME` per run, or **re-plan** |
 | Q3 events | capture files | documented schema from real streams | missing fields → poll `GET /v1/runs/{id}`, mark served model unknown |
 | Q4 stop and retention | `test_stop_settles_as_cancelled` + new retention probe | stop latency and retention window measured | long retention unknown → shorter consumer reconnect deadline |
-| Q5 tool lockdown | **new**: config yields only `mcp_paw_*`; find a reliable effective-tool-list probe | list equals approved list | no probe → enumerate-by-prompt cross-checked with hook log |
-| Q6 MCP | **new**: stub MCP server, streamable HTTP + static bearer; gateway down at start and mid-run | works; behaviour known | not working → readiness requires gateway; typed fail-fast |
+| Q5 tool lockdown | config yields only `mcp__paw__*`; **gateway-side canary call** at readiness (model listing is unreliable) | canary seen by the gateway | no canary → do not admit runs |
+| Q6 MCP | stub MCP server, streamable HTTP + static bearer; down at start and mid-run | **done**, see s0-findings | n/a |
 | Q7 instructions | `test_q7_instructions_are_followed` | followed | not followed → leading user-context turn instead |
-| Q8 hook block | **new** | `pre_tool_call` block works; exception path fails open | drop hook |
-| Q9 Hermès approvals (new) | run that triggers `waiting_for_approval` / `approval.request` | config turns it off, or adapter can deny via `/approval` | stalls → typed failure, add to lockdown check |
+| Q8 hook block | guard plugin | **done**: block works, raise fails **closed**, silent | hook must report to the gateway (002D) |
+| Q9 Hermès approvals (new) | `trust: untrusted` run | **done**: only with `trust: untrusted`; deny or stop exits work | adapter treats `waiting_for_approval` as a fault |
 | Q10 Idempotency-Key (new) | replay with PAW run id as key | same run returned, header present | not reliable → keep spec rule: dispatch_unknown = INTERRUPTED |
 | Q11 metrics off (new) | confirm no outbound traffic besides the model API | none | add to egress allow-list denial |
+
+**Status 2026-11-02: Q1-Q4, Q6-Q10 done; Q5 probe and Q11 open (s0-findings.md).**
 
 **Exit gate:** contract suite green against the pinned image; ADR-201 (session authority), ADR-202 (tool boundary), ADR-203 (OpenAI provider) written; any spec deviation recorded in the spec. **Needs from you:** the S0 environment file with the OpenAI key (kept outside the repo).
 

@@ -1,6 +1,7 @@
 {
  "events": [
-  "message.delta",
+  "tool.started",
+  "tool.completed",
   "message.delta",
   "message.delta",
   "message.delta",
@@ -28,18 +29,18 @@
    "model": "",
    "route_source": "global"
   },
-  "created_at": 1793564304.7742815,
+  "created_at": 1793565718.2285793,
   "pending_controls": [],
-  "run_id": "run_2ea7d7fc8609438e9248dd736cb9a519",
+  "run_id": "run_d97854240d9b4089954ab67c4e5c5341",
   "status": "completed",
-  "session_id": "run_2ea7d7fc8609438e9248dd736cb9a519",
-  "admission_id": "f457000b670943748cd55649be1ea451",
+  "session_id": "run_d97854240d9b4089954ab67c4e5c5341",
+  "admission_id": "51408320703c4f93ba05c2159eea0000",
   "execution_generation": 1,
-  "output": "The command `echo PAW_SHELL_OK` would output:\n\nPAW_SHELL_OK",
+  "output": "The exact output of the command is:\n\n`echo:PAW_SHELL_OK`",
   "usage": {
-   "input_tokens": 610,
-   "output_tokens": 19,
-   "total_tokens": 629
+   "input_tokens": 4801,
+   "output_tokens": 54,
+   "total_tokens": 4855
   }
  }
 }

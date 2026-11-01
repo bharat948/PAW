@@ -3,8 +3,8 @@
   "event": "message.delta",
   "data": {
    "event": "message.delta",
-   "run_id": "run_07077f22676a4668adec5acaa6345e11",
-   "timestamp": 1793564289.769561,
+   "run_id": "run_b7b88f636aae4a83b43824821f625ad2",
+   "timestamp": 1793565700.4143689,
    "delta": "Hi",
    "seq": 0
   },
@@ -16,8 +16,8 @@
   "event": "message.delta",
   "data": {
    "event": "message.delta",
-   "run_id": "run_07077f22676a4668adec5acaa6345e11",
-   "timestamp": 1793564289.7703922,
+   "run_id": "run_b7b88f636aae4a83b43824821f625ad2",
+   "timestamp": 1793565700.4155622,
    "delta": ".",
    "seq": 1
   },
@@ -27,13 +27,13 @@
   "event": "run.completed",
   "data": {
    "event": "run.completed",
-   "run_id": "run_07077f22676a4668adec5acaa6345e11",
-   "timestamp": 1793564289.8601153,
+   "run_id": "run_b7b88f636aae4a83b43824821f625ad2",
+   "timestamp": 1793565700.48753,
    "output": "Hi.",
    "usage": {
-    "input_tokens": 593,
-    "output_tokens": 3,
-    "total_tokens": 596
+    "input_tokens": 2312,
+    "output_tokens": 4,
+    "total_tokens": 2316
    },
    "runtime": {
     "provider": "",

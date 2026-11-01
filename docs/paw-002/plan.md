@@ -6,17 +6,21 @@ Audience: Bharat (owner) and whoever runs the spike. Written 2026-11-02.
 
 ## 1. Where we are
 
-**S0 is partly done** against the real pinned Hermès (see [s0-findings.md](s0-findings.md)): Q1 and Q2 pass, with two
-design consequences (compact-text history; native memory must be off). Q5 (probe), Q6 (MCP), Q8, Q9 and Q11 are still open,
-so S0 is **not** complete and no production code (`src/`) has been written.
+**S0 is nearly done** against the real pinned Hermès (see [s0-findings.md](s0-findings.md)): Q1, Q2, Q3, Q4, Q6, Q7, Q8, Q9 and
+Q10 are answered. Q1 and Q2 (the spec's stop-and-re-plan gates) **pass**, each with a design consequence. Still open: Q5
+(a deterministic readiness probe) and Q11 (outbound traffic). No production code (`src/`) has been written.
 
 | Item | State |
 |---|---|
-| Contract suite `paw-server/tests/contract/hermes/` | 17 tests: **16 pass + 1 expected failure against the real image**; 12 run in CI against the fake |
-| Fake Hermès server | Mirrors the wire format observed in S0 (unnamed SSE frames, `seq`) |
-| Wrapper image `deploy/hermes/` | Built and working; applies the native-tool and memory lockdown at every start |
-| Production code (`src/`) | None, deliberately: the spec forbids it before S0 passes |
-| ADR-201/202/203 | Drafts in s0-findings.md section 3 |
+| Contract suite `paw-server/tests/contract/hermes/` | **19 pass + 1 expected failure against the real image** (stable over two runs); the fake-backed part runs in CI |
+| Stub MCP server + guard plugin | Built (`tests/contract/hermes/stub_mcp_server.py`, `deploy/hermes/plugins/paw-guard`) |
+| Wrapper image `deploy/hermes/` | Applies at every start: native-tool lockdown, memory off, guard plugin, MCP `resources/prompts/sampling/elicitation` off |
+| Production code (`src/`) | None, deliberately |
+| ADR-201/202/203 | Drafts in s0-findings.md section 4, awaiting owner acceptance |
+
+**Spec corrections found by S0** (the spec should be amended): tool names are `mcp__paw__<tool>` not `mcp_paw_`; a failing
+`pre_tool_call` hook fails **closed**, not open; Hermès's own memory leaks state across runs unless disabled; Hermès health
+cannot see a parked MCP server so readiness needs a gateway-side canary; model text is never evidence a tool ran.
 
 ## 2. What the Hermès docs check (2026-11-02) changed
 

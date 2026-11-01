@@ -1,0 +1,3 @@
+name: paw-guard
+version: "0.1"
+description: PAW backup guard (spec D205). Blocks every tool call that is not a PAW MCP tool. Defense in depth only; the real boundary is the toolset lockdown and the PAW gateway.

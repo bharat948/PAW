@@ -21,6 +21,40 @@ if [ -n "${HERMES_CONFIG_SET:-}" ]; then
   IFS=';' read -ra pairs <<< "$HERMES_CONFIG_SET"
   for kv in "${pairs[@]}"; do hermes config set "${kv%%=*}" "${kv#*=}"; done
 fi
+# MCP server (S0 stub now, the PAW gateway in 002D). Written between markers so every start replaces it.
+#   PAW_MCP_URL, PAW_MCP_TOKEN (static bearer), PAW_MCP_TRUST (full|untrusted, default full), PAW_MCP_INCLUDE (csv)
+sed -i '/^# >>> paw-mcp$/,/^# <<< paw-mcp$/d' "$HERMES_HOME/config.yaml"
+if [ -n "${PAW_MCP_URL:-}" ]; then
+  : "${PAW_MCP_TOKEN:?PAW_MCP_TOKEN is required with PAW_MCP_URL}"
+  {
+    echo "# >>> paw-mcp"
+    echo "mcp_servers:"
+    echo "  paw:"
+    echo "    url: \"${PAW_MCP_URL}\""
+    echo "    headers:"
+    echo "      Authorization: \"Bearer ${PAW_MCP_TOKEN}\""
+    echo "    trust: ${PAW_MCP_TRUST:-full}"
+    echo "    timeout: ${PAW_MCP_TIMEOUT:-60}"
+    echo "    connect_timeout: ${PAW_MCP_CONNECT_TIMEOUT:-10}"
+    echo "    tools:"
+    [ -z "${PAW_MCP_INCLUDE:-}" ] || echo "      include: [${PAW_MCP_INCLUDE}]"
+    echo "      resources: false   # drops list_resources / read_resource (not removed by include)"
+    echo "      prompts: false     # drops list_prompts / get_prompt"
+    echo "    sampling:"
+    echo "      enabled: false     # the server may not make Hermes run model calls (default is on)"
+    echo "    elicitation:"
+    echo "      enabled: false     # the server may not pause a run to ask for input (default is on)"
+    echo "# <<< paw-mcp"
+  } >> "$HERMES_HOME/config.yaml"
+fi
+
+# PAW guard plugin (backup only; see plugins/paw-guard). PAW_HERMES_GUARD=1 installs and enables it.
+if [ "${PAW_HERMES_GUARD:-1}" = "1" ]; then
+  mkdir -p "$HERMES_HOME/plugins"
+  cp -r /opt/paw-plugins/paw-guard "$HERMES_HOME/plugins/"
+  hermes plugins enable paw-guard
+fi
+
 # Lockdown (spec D205/D208, verified in S0 on Hermes c7da41d). Hermes ships with ~14 native toolsets ON for the API
 # platform (terminal, file, code_execution, browser, web, memory, session_search, delegation, cron ...) and its own
 # memory feature persists facts across runs. PAW must be the only authority, so turn them all off at every start.

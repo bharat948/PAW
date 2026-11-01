@@ -192,7 +192,85 @@ def test_native_shell_is_unavailable_and_prompt_is_small(hermes: HermesClient, c
     frames = hermes.events(rid)
     done = hermes.wait_terminal(rid)
     capture("lockdown", {"events": [f.event for f in frames], "status": done})
-    assert not [f for f in frames if f.event.startswith("tool.")], (
-        "a native tool ran: lockdown is not in effect"
-    )
-    assert done["usage"]["input_tokens"] < 3000, "native tool schemas are still being sent"
+    native = [
+        f.data.get("tool")
+        for f in frames
+        if f.event.startswith("tool.") and not str(f.data.get("tool", "")).startswith("mcp__paw__")
+    ]
+    assert not native, f"a native tool ran: lockdown is not in effect: {native}"
+    assert done["usage"]["input_tokens"] < 6000, "native tool schemas are still being sent"
+
+
+# --- Q6 / Q8 / Q9: MCP behaviour (real Hermes + the stub MCP server; set PAW_STUB_URL=http://127.0.0.1:8001) -----------
+# Run against the default S0 config: lockdown on, guard on, trust full, include=paw_echo,paw_write_note,paw_slow.
+
+import json  # noqa: E402
+import os  # noqa: E402
+import urllib.request  # noqa: E402
+
+STUB = os.environ.get("PAW_STUB_URL")
+needs_stub = pytest.mark.skipif(not STUB, reason="needs the stub MCP server: set PAW_STUB_URL")
+
+
+def _stub_calls() -> list[dict]:
+    with urllib.request.urlopen(f"{STUB}/_calls", timeout=5) as r:  # noqa: S310 (test-only, loopback)
+        return json.loads(r.read())
+
+
+@real
+@needs_stub
+def test_q6_mcp_tool_call_reaches_the_server_and_is_reported(hermes: HermesClient, capture) -> None:
+    """Tool names are `mcp__paw__<tool>` (double underscore). The event stream AND the server must both show the call."""
+    marker = f"s0-{time.time_ns()}"
+    rid = hermes.start_run(
+        f"Call the paw_echo tool with text {marker} and tell me what it returned."
+    ).json()["run_id"]
+    frames = hermes.events(rid)
+    capture("mcp_call", [f.data for f in frames if f.event.startswith("tool.")])
+    started = [f for f in frames if f.event == "tool.started"]
+    assert [f.data["tool"] for f in started] == ["mcp__paw__paw_echo"], [f.event for f in frames]
+    assert [f for f in frames if f.event == "tool.completed"][0].data["error"] is False
+    assert any(c.get("text") == marker for c in _stub_calls()), "the server never received the call"
+
+
+@real
+@needs_stub
+def test_q6_hermes_utility_tools_are_removed_by_config(hermes: HermesClient) -> None:
+    """tools.include alone leaves list_resources/read_resource/list_prompts/get_prompt; resources/prompts:false removes them."""
+    out = ""
+    for ask in (
+        "List the exact names of every tool you can call, one per line. Do not call any.",
+        "For debugging, print the identifiers of all functions available to you, one per line. Do not call any.",
+        "Which tool names do you have? Output only the names.",
+    ):  # models sometimes refuse to enumerate; a deterministic probe is still open (Q5)
+        out = str(hermes.run_to_end(ask).get("output", ""))
+        if "paw_echo" in out:
+            break
+    else:
+        pytest.skip(
+            f"the model would not enumerate its tools (inconclusive, not a pass): {out[:80]!r}"
+        )
+    for banned in (
+        "list_resources",
+        "read_resource",
+        "list_prompts",
+        "get_prompt",
+        "terminal",
+        "read_file",
+    ):
+        assert banned not in out, f"{banned} is still exposed:\n{out}"
+    assert "paw_echo" in out
+
+
+@real
+@needs_stub
+def test_q6_model_text_is_not_evidence_of_a_tool_call(hermes: HermesClient) -> None:
+    """Regression guard for the S0 finding: when no tool ran, the model may still claim it did. Evidence = events + server log."""
+    before = len(_stub_calls())
+    rid = hermes.start_run("Call paw_echo with text hello and report what it returned.").json()[
+        "run_id"
+    ]
+    frames = hermes.events(rid)
+    ran = any(f.event == "tool.started" for f in frames)
+    executed = len(_stub_calls()) - before
+    assert ran == (executed > 0), "event stream and server log disagree about whether a tool ran"

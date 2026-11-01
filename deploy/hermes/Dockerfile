@@ -26,6 +26,7 @@ RUN curl -fsSL -o /tmp/install.sh https://hermes-agent.nousresearch.com/install.
  && rm -f /tmp/install.sh
 
 ENV PATH="/home/hermes/.local/bin:${PATH}"
+COPY --chown=hermes:hermes plugins/ /opt/paw-plugins/
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["hermes", "gateway"]

@@ -1,0 +1,22 @@
+[
+ {
+  "event": "tool.started",
+  "run_id": "run_4425344e435443aca99575b7d5947219",
+  "timestamp": 1793565722.5406418,
+  "tool": "mcp__paw__paw_echo",
+  "preview": "s0-1793565720632863691",
+  "tool_call_id": "call_sOyscJ4nlhpbVm7ry1bVJ2Vq",
+  "seq": 0
+ },
+ {
+  "event": "tool.completed",
+  "run_id": "run_4425344e435443aca99575b7d5947219",
+  "timestamp": 1793565722.555103,
+  "tool": "mcp__paw__paw_echo",
+  "duration": 0,
+  "error": false,
+  "tool_call_id": "call_sOyscJ4nlhpbVm7ry1bVJ2Vq",
+  "preview": "",
+  "seq": 1
+ }
+]

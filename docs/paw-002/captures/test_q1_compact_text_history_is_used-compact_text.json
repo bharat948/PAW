@@ -6,17 +6,17 @@
   "model": "",
   "route_source": "global"
  },
- "created_at": 1793564294.5455792,
+ "created_at": 1793565705.9880252,
  "pending_controls": [],
- "run_id": "run_f2618878510c4aa58e4ff64f759dbd0e",
+ "run_id": "run_4c9110a17cd94c949a7420054b7ae741",
  "status": "completed",
- "session_id": "run_f2618878510c4aa58e4ff64f759dbd0e",
- "admission_id": "a012c502f2624d20ba880dd0e499b1ca",
+ "session_id": "run_4c9110a17cd94c949a7420054b7ae741",
+ "admission_id": "b8ee787a8ff74a7fa0475df75d517ff7",
  "execution_generation": 1,
  "output": "42317",
  "usage": {
-  "input_tokens": 635,
-  "output_tokens": 3,
-  "total_tokens": 638
+  "input_tokens": 2354,
+  "output_tokens": 4,
+  "total_tokens": 2358
  }
 }
