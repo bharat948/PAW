@@ -115,9 +115,15 @@ class Env:
         )
         return Settings(**{**base, **self.overrides, **kw})  # type: ignore[arg-type]
 
-    def client(self, **kw) -> TestClient:
+    def client(self, idp=None, **kw) -> TestClient:
         c = TestClient(
-            create_app(self.settings(**kw), store=self.store, embedder=self.embedder, llm=self.llm),
+            create_app(
+                self.settings(**kw),
+                store=self.store,
+                embedder=self.embedder,
+                llm=self.llm,
+                idp=idp,
+            ),
             raise_server_exceptions=False,
         )
         c.__enter__()

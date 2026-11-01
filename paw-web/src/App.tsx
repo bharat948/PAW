@@ -9,9 +9,10 @@ import { useHashRoute } from './hooks/useHashRoute'
 
 function Routes() {
   const route = useHashRoute()
-  const { signedIn } = useAuth()
+  const { signedIn, loading } = useAuth()
   let page
   if (route === 'status') page = <ServiceStatus />
+  else if (loading) page = <p role="status" className="muted">Checking your session…</p>
   else if (!signedIn) page = <LoginForm />
   else if (route === 'search') page = <SearchPage />
   else if (route === 'ask') page = <AskPage />

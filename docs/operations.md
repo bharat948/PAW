@@ -74,7 +74,8 @@ The API error envelope is `{code, message, correlation_id, retryable, details?}`
 |---|---|---|
 | `dev.sh`: "Cannot connect to the Docker daemon" | Docker not running | Start Docker (section 2), rerun |
 | Port 8000/5173 already in use | Leftover process or app containers | `ss -ltnp \| grep -E ':8000\|:5173'`; kill the PID or `docker compose stop api worker web` |
-| Web shows 401 / login loops | Wrong or missing `PAW_OWNER_TOKEN` | Compare token in `paw-server/.env`; sign out and in |
+| Web shows 401 / login loops | Wrong or missing `PAW_OWNER_TOKEN` (token mode) or an expired Google session | Compare token in `paw-server/.env`; sign out and in |
+| Google sign-in problems (redirect_uri_mismatch, not allowed, no button) | OAuth client, allow-list or an API not restarted after `.env` edits | `docs/auth-google-setup.md`, section 4 |
 | `/ready` 503 | Postgres down or migrations behind | `docker ps`; `make -C paw-server migrate` |
 | Upload stays "pending" | Worker not running or erroring | Look for `[worker]` lines; `paw.worker` "worker loop error" |
 | Worker logs `AdminShutdown` / "failed to resolve host 'db'" | Postgres restarted or stopped under it | Normal during a DB restart; the worker reconnects. If it persists, restart the worker |

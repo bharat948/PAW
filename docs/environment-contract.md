@@ -20,8 +20,11 @@ The API and worker refuse to start when `PAW_ENV=home` and any of these hold:
 - `PAW_OWNER_TOKEN`, `PAW_S3_ACCESS_KEY`, `PAW_S3_SECRET_KEY` or `PAW_DATABASE_URL` empty, or containing a
   placeholder marker (`paw_local_only`, `changeme`, `change-me`, `change_me`, `replace`, `example`, `todo`).
 - Any CORS origin is `http://`.
+- `PAW_AUTH_MODE` is not `google` (the dev owner token is not a login method in home), or `PAW_API_PUBLIC_URL` / `PAW_WEB_URL` is not https,
+  or the Google client ID/secret or `PAW_ALLOWED_EMAILS` is missing. See `docs/auth-google-setup.md`.
 
-New keys: `PAW_INSTALLATION_ID`, `PAW_ENABLED_PROFILE` (`foundation` | `admin-agent`, default `foundation`),
+New keys: `PAW_AUTH_MODE`, `PAW_GOOGLE_CLIENT_ID`, `PAW_GOOGLE_CLIENT_SECRET`, `PAW_ALLOWED_EMAILS`, `PAW_API_PUBLIC_URL`, `PAW_WEB_URL`,
+`PAW_SESSION_TTL_S`, `PAW_SESSION_IDLE_S`, `PAW_STEPUP_WINDOW_S`, `PAW_INSTALLATION_ID`, `PAW_ENABLED_PROFILE` (`foundation` | `admin-agent`, default `foundation`),
 `PAW_PUBLIC_BASE_URL`. Existing: `PAW_RELEASE_REVISION`. Values come from an env file outside the repo
 (`deploy/config/home.env.example` documents each key). Never put a secret in a `VITE_*` value.
 
