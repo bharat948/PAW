@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/.venv
+**/.env
+**/.env.*
+.git
+paw-server
+paw-web/test-results
