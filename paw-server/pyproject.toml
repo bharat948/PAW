@@ -49,6 +49,7 @@ testpaths = ["tests"]
 markers = [
   "integration: needs a real PostgreSQL (PAW_TEST_DATABASE_URL)",
   "live: calls a real embedding provider (PAW_EMBEDDING_API_KEY); costs money, never run in CI by default",
+  "hermes_real: needs a real pinned Hermes runtime (PAW_HERMES_URL + PAW_HERMES_KEY) and a model; costs money, never run on untrusted PRs",
 ]
 
 [[tool.mypy.overrides]]
