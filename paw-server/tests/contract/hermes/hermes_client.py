@@ -35,7 +35,11 @@ def parse_sse(lines: Iterator[str]) -> Iterator[SseFrame]:
                     payload: Any = json.loads(text)
                 except ValueError:
                     payload = text
-                yield SseFrame(event, payload, "\n".join(raw), comments)
+                name = event
+                if event == "message" and isinstance(payload, dict):
+                    # real Hermes (c7da41d) sends unnamed frames: {"event": "run.completed", "seq": 2, ...}
+                    name = str(payload.get("event") or event)
+                yield SseFrame(name, payload, "\n".join(raw), comments)
                 comments = []
             event, data, raw = "message", [], []  # comments carry over to the next real frame
             continue

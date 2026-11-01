@@ -6,15 +6,17 @@ Audience: Bharat (owner) and whoever runs the spike. Written 2026-11-02.
 
 ## 1. Where we are
 
-Spike **S0 is not started against a real Hermès**: it is blocked on inputs only the owner can provide (section 3).
-What exists on this branch is the part that does not need them:
+**S0 is partly done** against the real pinned Hermès (see [s0-findings.md](s0-findings.md)): Q1 and Q2 pass, with two
+design consequences (compact-text history; native memory must be off). Q5 (probe), Q6 (MCP), Q8, Q9 and Q11 are still open,
+so S0 is **not** complete and no production code (`src/`) has been written.
 
 | Item | State |
 |---|---|
-| Contract test harness `paw-server/tests/contract/hermes/` | Built. 11 tests run in CI against a fake; 4 `hermes_real` tests skip until a real runtime is configured |
-| Fake Hermès server | Built from the **documented** surface only. Passing against it proves the harness, not Hermès |
-| Production code (`src/`) | **None, deliberately.** The spec forbids production code before S0 passes |
-| ADR-201 (session authority), ADR-202 (tool boundary) | Not written; they are S0 outputs |
+| Contract suite `paw-server/tests/contract/hermes/` | 17 tests: **16 pass + 1 expected failure against the real image**; 12 run in CI against the fake |
+| Fake Hermès server | Mirrors the wire format observed in S0 (unnamed SSE frames, `seq`) |
+| Wrapper image `deploy/hermes/` | Built and working; applies the native-tool and memory lockdown at every start |
+| Production code (`src/`) | None, deliberately: the spec forbids it before S0 passes |
+| ADR-201/202/203 | Drafts in s0-findings.md section 3 |
 
 ## 2. What the Hermès docs check (2026-11-02) changed
 

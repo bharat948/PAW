@@ -1,0 +1,22 @@
+{
+ "object": "hermes.run",
+ "model": "hermes-agent",
+ "runtime": {
+  "provider": "",
+  "model": "",
+  "route_source": "global"
+ },
+ "created_at": 1793564295.5767336,
+ "pending_controls": [],
+ "run_id": "run_6309b1c914ef4646803b2dd854bca5c7",
+ "status": "completed",
+ "session_id": "run_6309b1c914ef4646803b2dd854bca5c7",
+ "admission_id": "90606d3938204a63856f85995f2fd1df",
+ "execution_generation": 1,
+ "output": "[interrupt: no assistant output for this turn]",
+ "usage": {
+  "input_tokens": 637,
+  "output_tokens": 11,
+  "total_tokens": 648
+ }
+}

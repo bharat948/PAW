@@ -1,0 +1,22 @@
+{
+ "object": "hermes.run",
+ "model": "hermes-agent",
+ "runtime": {
+  "provider": "",
+  "model": "",
+  "route_source": "global"
+ },
+ "created_at": 1793564294.5455792,
+ "pending_controls": [],
+ "run_id": "run_f2618878510c4aa58e4ff64f759dbd0e",
+ "status": "completed",
+ "session_id": "run_f2618878510c4aa58e4ff64f759dbd0e",
+ "admission_id": "a012c502f2624d20ba880dd0e499b1ca",
+ "execution_generation": 1,
+ "output": "42317",
+ "usage": {
+  "input_tokens": 635,
+  "output_tokens": 3,
+  "total_tokens": 638
+ }
+}

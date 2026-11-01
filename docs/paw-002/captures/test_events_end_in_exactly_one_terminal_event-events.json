@@ -1,0 +1,50 @@
+[
+ {
+  "event": "message.delta",
+  "data": {
+   "event": "message.delta",
+   "run_id": "run_07077f22676a4668adec5acaa6345e11",
+   "timestamp": 1793564289.769561,
+   "delta": "Hi",
+   "seq": 0
+  },
+  "comments": [
+   "open"
+  ]
+ },
+ {
+  "event": "message.delta",
+  "data": {
+   "event": "message.delta",
+   "run_id": "run_07077f22676a4668adec5acaa6345e11",
+   "timestamp": 1793564289.7703922,
+   "delta": ".",
+   "seq": 1
+  },
+  "comments": []
+ },
+ {
+  "event": "run.completed",
+  "data": {
+   "event": "run.completed",
+   "run_id": "run_07077f22676a4668adec5acaa6345e11",
+   "timestamp": 1793564289.8601153,
+   "output": "Hi.",
+   "usage": {
+    "input_tokens": 593,
+    "output_tokens": 3,
+    "total_tokens": 596
+   },
+   "runtime": {
+    "provider": "",
+    "model": "",
+    "route_source": "global"
+   },
+   "completed": true,
+   "partial": false,
+   "interrupted": false,
+   "seq": 2
+  },
+  "comments": []
+ }
+]

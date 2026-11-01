@@ -111,7 +111,7 @@ class FakeHermes:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
-                self.wfile.write(b": keepalive\n\n")
+                self.wfile.write(b": open\n\n")
                 i = 0
                 while True:
                     with run.cond:
@@ -126,7 +126,10 @@ class FakeHermes:
                                 return
                         name, payload = run.events[i]
                     i += 1
-                    self.wfile.write(f"event: {name}\ndata: {json.dumps(payload)}\n\n".encode())
+                    frame = {"event": name, "run_id": run.id, "seq": i - 1, **payload}
+                    self.wfile.write(
+                        f"data: {json.dumps(frame)}\n\n".encode()
+                    )  # unnamed frame, like real Hermes
                     self.wfile.flush()
                     if name.startswith("run.") and name != "run.steered":
                         return
@@ -152,7 +155,7 @@ class FakeHermes:
                     if key:
                         fake.idem[key] = rid
                     threading.Thread(target=fake._execute, args=(run,), daemon=True).start()
-                    return self._json(202, {"run_id": rid, "status": "started"})
+                    return self._json(202, {"run_id": rid, "status": "started", "replayed": False})
                 parts = self.path.strip("/").split("/")
                 if len(parts) == 4 and parts[3] == "stop" and parts[2] in fake.runs:
                     run = fake.runs[parts[2]]

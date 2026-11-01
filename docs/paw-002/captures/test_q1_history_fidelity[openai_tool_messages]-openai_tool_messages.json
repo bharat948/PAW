@@ -1,0 +1,22 @@
+{
+ "object": "hermes.run",
+ "model": "hermes-agent",
+ "runtime": {
+  "provider": "",
+  "model": "",
+  "route_source": "global"
+ },
+ "created_at": 1793563815.8295877,
+ "pending_controls": [],
+ "run_id": "run_7653045f340a4945a69cebafb51741d0",
+ "status": "completed",
+ "session_id": "run_7653045f340a4945a69cebafb51741d0",
+ "admission_id": "c95445175301408bacfa4f8030dc6bd0",
+ "execution_generation": 1,
+ "output": "I'm unable to access any specific order details or totals. Please provide more context or specify where to look.",
+ "usage": {
+  "input_tokens": 10441,
+  "output_tokens": 23,
+  "total_tokens": 10464
+ }
+}

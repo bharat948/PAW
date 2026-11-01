@@ -21,4 +21,17 @@ if [ -n "${HERMES_CONFIG_SET:-}" ]; then
   IFS=';' read -ra pairs <<< "$HERMES_CONFIG_SET"
   for kv in "${pairs[@]}"; do hermes config set "${kv%%=*}" "${kv#*=}"; done
 fi
+# Lockdown (spec D205/D208, verified in S0 on Hermes c7da41d). Hermes ships with ~14 native toolsets ON for the API
+# platform (terminal, file, code_execution, browser, web, memory, session_search, delegation, cron ...) and its own
+# memory feature persists facts across runs. PAW must be the only authority, so turn them all off at every start.
+# Opt out only for experiments: PAW_HERMES_LOCKDOWN=0. The real compiler is 002C; this is the S0 stand-in.
+if [ "${PAW_HERMES_LOCKDOWN:-1}" = "1" ]; then
+  hermes config set memory.memory_enabled false
+  hermes config set memory.user_profile_enabled false
+  names=$(hermes tools list --platform api_server 2>&1 | grep "✓ enabled" | awk '{print $3}' | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  [ -z "$names" ] || hermes tools disable --platform api_server $names
+  left=$(hermes tools list --platform api_server 2>&1 | grep -c "✓ enabled" || true)
+  [ "$left" = "0" ] || { echo "lockdown failed: $left native toolsets still enabled" >&2; exit 1; }
+fi
 exec "$@"

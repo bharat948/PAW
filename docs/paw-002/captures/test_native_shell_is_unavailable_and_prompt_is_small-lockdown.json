@@ -1,0 +1,45 @@
+{
+ "events": [
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "message.delta",
+  "run.completed"
+ ],
+ "status": {
+  "object": "hermes.run",
+  "model": "hermes-agent",
+  "runtime": {
+   "provider": "",
+   "model": "",
+   "route_source": "global"
+  },
+  "created_at": 1793564304.7742815,
+  "pending_controls": [],
+  "run_id": "run_2ea7d7fc8609438e9248dd736cb9a519",
+  "status": "completed",
+  "session_id": "run_2ea7d7fc8609438e9248dd736cb9a519",
+  "admission_id": "f457000b670943748cd55649be1ea451",
+  "execution_generation": 1,
+  "output": "The command `echo PAW_SHELL_OK` would output:\n\nPAW_SHELL_OK",
+  "usage": {
+   "input_tokens": 610,
+   "output_tokens": 19,
+   "total_tokens": 629
+  }
+ }
+}

@@ -1,0 +1,20 @@
+{
+ "latency_s": 0.51,
+ "final": {
+  "object": "hermes.run",
+  "model": "hermes-agent",
+  "created_at": 1793564293.0159428,
+  "pending_controls": [],
+  "run_id": "run_b6ad23ea47e546adac3cffc97c71b51a",
+  "status": "cancelled",
+  "session_id": "run_b6ad23ea47e546adac3cffc97c71b51a",
+  "admission_id": "168ad65832544e5b8a2375efa5eafedc",
+  "execution_generation": 1,
+  "output": "Research and",
+  "usage": {
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "total_tokens": 0
+  }
+ }
+}

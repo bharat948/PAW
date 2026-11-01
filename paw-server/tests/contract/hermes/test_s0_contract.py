@@ -50,6 +50,15 @@ def test_events_end_in_exactly_one_terminal_event(hermes: HermesClient, capture)
     assert names[-1] in TERMINAL_EVENTS
 
 
+def test_event_frames_carry_run_id_and_contiguous_seq(hermes: HermesClient) -> None:
+    """Real frames: {"event", "run_id", "seq", ...}. PAW dedups on (run_id, seq), so seq must be 0,1,2..."""
+    rid = hermes.start_run("say hi").json()["run_id"]
+    frames = hermes.events(rid)
+    seqs = [f.data["seq"] for f in frames if isinstance(f.data, dict)]
+    assert seqs == list(range(len(seqs))), seqs
+    assert all(f.data["run_id"] == rid for f in frames)
+
+
 def test_terminal_status_carries_usage(hermes: HermesClient, capture) -> None:
     done = hermes.run_to_end("say hi")
     capture("status", done)
@@ -74,12 +83,15 @@ def test_idempotency_key_replays_the_same_run(hermes: HermesClient) -> None:
 
 
 def test_stop_settles_as_cancelled(hermes: HermesClient, capture) -> None:
-    rid = hermes.start_run("SLOW: count to one thousand slowly, one number per line").json()[
+    rid = hermes.start_run("SLOW: write a 1500 word essay about the history of tea").json()[
         "run_id"
     ]
+    time.sleep(
+        1
+    )  # real Hermes answers an immediate stop with 'cancelled'; once running, with 'stopping'
     t0 = time.monotonic()
     stop = hermes.stop_run(rid)
-    assert stop.json()["status"] == "stopping"
+    assert stop.json()["status"] in {"stopping", "cancelled"}
     final = hermes.wait_terminal(rid, deadline_s=60)
     capture("stop", {"latency_s": round(time.monotonic() - t0, 2), "final": final})
     assert final["status"] == "cancelled"
@@ -119,20 +131,33 @@ def _compact_text_history() -> list[dict]:
     ]
 
 
-@real
-@pytest.mark.parametrize("fmt", ["openai_tool_messages", "compact_text"])
-def test_q1_history_fidelity(hermes: HermesClient, fmt: str, capture) -> None:
-    """Records WHICH history rendering the model uses. The spec needs at least one to pass (else Option A)."""
-    hist = _openai_style_history() if fmt == "openai_tool_messages" else _compact_text_history()
+def _history_run(hermes: HermesClient, hist: list[dict], capture, name: str) -> tuple[int, str]:
     r = hermes.start_run(
         "What total did the lookup return? Reply with the number only.", conversation_history=hist
     )
-    assert r.status_code == 202, (
-        r.text
-    )  # a 4xx here is itself the finding: the format is not accepted
+    if r.status_code != 202:
+        return r.status_code, r.text
     done = hermes.wait_terminal(r.json()["run_id"])
-    capture(fmt, done)
-    assert FACT in str(done.get("output", "")), f"{fmt}: model did not use the history"
+    capture(name, done)
+    return 202, str(done.get("output", ""))
+
+
+@real
+def test_q1_compact_text_history_is_used(hermes: HermesClient, capture) -> None:
+    """S0 finding: the compact-text rendering works. This is the spec's Q1 fallback and is what the assembler uses."""
+    code, out = _history_run(hermes, _compact_text_history(), capture, "compact_text")
+    assert code == 202 and FACT in out, (code, out)
+
+
+@real
+@pytest.mark.xfail(
+    strict=True,
+    reason="S0 finding (Hermes c7da41d): role=tool messages / tool_calls in conversation_history are not used by "
+    "the model. strict: if Hermes fixes this the test XPASSes and fails the suite, prompting a design review.",
+)
+def test_q1_openai_style_tool_messages_are_used(hermes: HermesClient, capture) -> None:
+    code, out = _history_run(hermes, _openai_style_history(), capture, "openai_tool_messages")
+    assert code == 202 and FACT in out, (code, out)
 
 
 @real
@@ -152,3 +177,22 @@ def test_q7_instructions_are_followed(hermes: HermesClient) -> None:
         "Name one primary colour.", instructions="End every reply with the exact token ZEBRA-7."
     )
     assert "ZEBRA-7" in str(done.get("output", ""))
+
+
+# --- Q5 / T208: native tool lockdown (real only; the image entrypoint applies it by default) -----------------------
+
+
+@real
+def test_native_shell_is_unavailable_and_prompt_is_small(hermes: HermesClient, capture) -> None:
+    """S0 finding: unlocked, Hermes sends ~10k tokens of native tool schemas on every run and can run a shell.
+    Locked (PAW_HERMES_LOCKDOWN=1, the image default) there are no tool events and the prompt is a few hundred tokens."""
+    rid = hermes.start_run(
+        "Run the shell command `echo PAW_SHELL_OK` and tell me its exact output."
+    ).json()["run_id"]
+    frames = hermes.events(rid)
+    done = hermes.wait_terminal(rid)
+    capture("lockdown", {"events": [f.event for f in frames], "status": done})
+    assert not [f for f in frames if f.event.startswith("tool.")], (
+        "a native tool ran: lockdown is not in effect"
+    )
+    assert done["usage"]["input_tokens"] < 3000, "native tool schemas are still being sent"
