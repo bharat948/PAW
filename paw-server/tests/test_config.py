@@ -40,3 +40,43 @@ def test_cors_origins_accepts_csv_and_json(monkeypatch):
     assert Settings(_env_file=None).cors_origins == ["http://a", "http://b"]
     monkeypatch.setenv("PAW_CORS_ORIGINS", '["http://c"]')
     assert Settings(_env_file=None).cors_origins == ["http://c"]
+
+
+# --- home environment (PAW-001D, D-T03) ---
+
+HOME_OK = dict(
+    env="home",
+    database_url="postgresql://paw:Xk29vQ8sLm@db:5432/paw",
+    owner_token="o" * 32,
+    s3_endpoint_url="http://s3:9000",
+    s3_access_key="AKIAHOMEKEY0123456789",
+    s3_secret_key="s3cr3t-value-0123456789",
+    installation_id="home-laptop-1",
+    public_base_url="https://paw.mydomain.dev",
+)
+
+
+def home(**over):
+    return Settings(_env_file=None, **{**HOME_OK, **over})  # type: ignore[arg-type]
+
+
+def test_home_accepts_complete_config():
+    assert home().env == "home"
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"installation_id": ""},
+        {"public_base_url": None},
+        {"public_base_url": "http://paw.mydomain.dev"},
+        {"owner_token": "changeme-changeme-changeme"},
+        {"s3_secret_key": ""},
+        {"s3_access_key": "paw_local_only"},
+        {"database_url": "postgresql://paw:paw_local_only@db/paw"},
+        {"cors_origins": ["http://localhost:5173"]},
+    ],
+)
+def test_home_rejects_unsafe_config(over):
+    with pytest.raises(ValidationError):
+        home(**over)

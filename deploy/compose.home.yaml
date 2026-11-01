@@ -1,0 +1,122 @@
+# Home deployment (PAW-001D). One fixed project and fixed external volumes so a different checkout
+# directory can never create a second, empty stack. Run with an explicit env file:
+#   docker compose --env-file /etc/paw/home.env -f deploy/compose.home.yaml up -d
+# Routine start never migrates and never creates volumes. See docs/environment-contract.md.
+name: paw-home
+
+x-app-env: &app-env
+  PAW_ENV: home
+  PAW_ENABLED_PROFILE: foundation
+  PAW_INSTALLATION_ID: ${PAW_INSTALLATION_ID:?set PAW_INSTALLATION_ID}
+  PAW_RELEASE_REVISION: ${PAW_RELEASE_REVISION:?set PAW_RELEASE_REVISION}
+  PAW_PUBLIC_BASE_URL: ${PAW_PUBLIC_BASE_URL:?set PAW_PUBLIC_BASE_URL}
+  PAW_CORS_ORIGINS: '["${PAW_PUBLIC_BASE_URL}"]'
+  PAW_LOG_LEVEL: INFO
+  PAW_DATABASE_URL: ${PAW_DATABASE_URL:?set PAW_DATABASE_URL}
+  PAW_OWNER_TOKEN: ${PAW_OWNER_TOKEN:?set PAW_OWNER_TOKEN}
+  PAW_S3_ENDPOINT_URL: http://s3:9000
+  PAW_S3_ACCESS_KEY: ${PAW_S3_ACCESS_KEY:?set PAW_S3_ACCESS_KEY}
+  PAW_S3_SECRET_KEY: ${PAW_S3_SECRET_KEY:?set PAW_S3_SECRET_KEY}
+  PAW_S3_CREATE_BUCKET: ${PAW_S3_CREATE_BUCKET:-false}
+  PAW_EMBEDDING_PROVIDER: ${PAW_EMBEDDING_PROVIDER:-openai}
+  PAW_EMBEDDING_MODEL: ${PAW_EMBEDDING_MODEL:-text-embedding-3-small}
+  PAW_EMBEDDING_API_KEY: ${PAW_EMBEDDING_API_KEY:-}
+  PAW_LLM_PROVIDER: ${PAW_LLM_PROVIDER:-openai}
+  PAW_LLM_MODEL: ${PAW_LLM_MODEL:-gpt-4o-mini}
+  PAW_LLM_API_KEY: ${PAW_LLM_API_KEY:-}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: paw
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]            # no published port
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paw -d paw"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  s3:
+    image: chrislusf/seaweedfs:4.50
+    restart: unless-stopped
+    command: ["server", "-dir=/data", "-s3", "-s3.port=9000", "-ip.bind=0.0.0.0"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${PAW_S3_ACCESS_KEY:?set PAW_S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${PAW_S3_SECRET_KEY:?set PAW_S3_SECRET_KEY}
+    volumes:
+      - s3data:/data
+    networks: [backend]            # no published port
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null && wget -S -qO- http://127.0.0.1:9000/ 2>&1 | grep -q HTTP"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Owner-run only: docker compose ... --profile migrate run --rm migrate
+  migrate:
+    profiles: [migrate]
+    build: ../paw-server
+    image: paw-server:${PAW_RELEASE_REVISION}
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [backend]
+    restart: "no"
+
+  api:
+    build: ../paw-server
+    image: paw-server:${PAW_RELEASE_REVISION}
+    restart: unless-stopped
+    environment: *app-env
+    depends_on:
+      db: {condition: service_healthy}
+      s3: {condition: service_healthy}
+    networks: [backend, edge]
+    healthcheck:   # /ready also fails when migrations are behind, so a stale schema is never "up"
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build: ../paw-server
+    image: paw-server:${PAW_RELEASE_REVISION}
+    restart: unless-stopped
+    command: ["python", "-m", "paw_server.worker"]
+    environment: *app-env
+    depends_on:
+      db: {condition: service_healthy}
+      s3: {condition: service_healthy}
+    networks: [backend, edge]      # needs outbound access for embedding calls
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: deploy/proxy/Dockerfile
+    restart: unless-stopped
+    ports: ["127.0.0.1:${PAW_PROXY_PORT:-8080}:8080"]   # loopback only; the tunnel connects here
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [edge]
+
+networks:
+  backend:
+    internal: true   # db and s3 have no route in or out
+  edge: {}
+
+# external: compose refuses to start if a volume is missing, so a lost database can never be
+# silently replaced by an empty one. Created once by the bootstrap step (docs/environment-contract.md).
+volumes:
+  pgdata:
+    external: true
+    name: paw_home_pgdata
+  s3data:
+    external: true
+    name: paw_home_s3data

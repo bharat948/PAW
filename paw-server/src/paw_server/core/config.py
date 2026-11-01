@@ -12,6 +12,18 @@ class Environment(StrEnum):
     CI = "ci"
     STAGING = "staging"
     PRODUCTION = "production"
+    HOME = "home"  # persistent self-hosted install (PAW-001D)
+
+
+_PLACEHOLDERS = (
+    "paw_local_only",
+    "changeme",
+    "change-me",
+    "change_me",
+    "replace",
+    "example",
+    "todo",
+)
 
 
 class Settings(BaseSettings):
@@ -27,6 +39,11 @@ class Settings(BaseSettings):
     db_pool_max: int = Field(default=5, ge=1)
     db_connect_timeout_s: float = Field(default=2.0, gt=0)
     release_revision: str = "dev"
+
+    # deployment identity (PAW-001D); only enforced when env=home
+    installation_id: str = ""
+    enabled_profile: Literal["foundation", "admin-agent"] = "foundation"
+    public_base_url: str | None = None  # the one https origin browsers use
 
     # auth (single owner; D006)
     owner_token: str = Field(min_length=16)
@@ -96,12 +113,32 @@ class Settings(BaseSettings):
             raise ValueError("PAW_EMBEDDING_API_KEY is required for the openai provider")
         if self.db_pool_min > self.db_pool_max:
             raise ValueError("PAW_DB_POOL_MIN must not exceed PAW_DB_POOL_MAX")
-        if self.env in (Environment.STAGING, Environment.PRODUCTION):
+        if self.env in (Environment.STAGING, Environment.PRODUCTION, Environment.HOME):
             if "paw_local_only" in self.database_url or "paw_local_only" in self.owner_token:
                 raise ValueError("local-only database credentials are not allowed in this env")
             if any(o.startswith("http://") for o in self.cors_origins):
-                raise ValueError("CORS origins must be https in staging/production")
+                raise ValueError("CORS origins must be https in staging/production/home")
+        if self.env is Environment.HOME:
+            self._check_home()
         return self
+
+    def _check_home(self) -> None:
+        """A home install holds real data: refuse dev defaults and placeholders at startup."""
+        if not self.installation_id.strip():
+            raise ValueError("PAW_INSTALLATION_ID is required in the home environment")
+        if not (self.public_base_url or "").startswith("https://"):
+            raise ValueError(
+                "PAW_PUBLIC_BASE_URL must be an https:// origin in the home environment"
+            )
+        secrets = {
+            "PAW_OWNER_TOKEN": self.owner_token,
+            "PAW_S3_ACCESS_KEY": self.s3_access_key,
+            "PAW_S3_SECRET_KEY": self.s3_secret_key,
+            "PAW_DATABASE_URL": self.database_url,
+        }
+        for name, value in secrets.items():
+            if not value or any(m in value.lower() for m in _PLACEHOLDERS):
+                raise ValueError(f"{name} is empty or a placeholder; set a real secret for home")
 
 
 @lru_cache
