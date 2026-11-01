@@ -113,10 +113,11 @@ networks:
 
 # external: compose refuses to start if a volume is missing, so a lost database can never be
 # silently replaced by an empty one. Created once by the bootstrap step (docs/environment-contract.md).
+# The names are overridable only so a restore drill can target an isolated copy (scripts/backup).
 volumes:
   pgdata:
     external: true
-    name: paw_home_pgdata
+    name: ${PAW_PGDATA_VOLUME:-paw_home_pgdata}
   s3data:
     external: true
-    name: paw_home_s3data
+    name: ${PAW_S3DATA_VOLUME:-paw_home_s3data}

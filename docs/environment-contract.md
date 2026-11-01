@@ -92,3 +92,45 @@ D-T08/T12-T23/T25-T42.
 - The dev `paw-server/compose.yaml` puts the worker on an internal-only network, so with
   `PAW_EMBEDDING_PROVIDER=openai` under `make up` the worker cannot reach OpenAI. Home compose does not have this.
 - `PAW_OWNER_TOKEN` bearer auth is still the interim auth; Cloudflare Access verification is 001D-06.
+
+## Backups and restore (001D-02)
+
+Tool: `scripts/backup/pawbackup.py`. Run with
+`uv run --project paw-server --with pyrage python scripts/backup/pawbackup.py <command>`.
+
+| Command | What it does |
+|---|---|
+| `keygen` | New `age` key pair. **Generate on another machine**; the laptop only ever holds the public recipient. |
+| `run` | Stops the worker, `pg_dump -Fc`, exports every object with sha256, checks every DB-referenced object is present, tars and encrypts (`age`), uploads, re-downloads and hashes the remote copy, writes `manifest.json` **last** (that is what makes a backup "complete"), cleans local staging, applies retention, restarts the worker. |
+| `list` / `prune` | Completed backups / retention (default 7 newest + 4 weekly; never removes the newest). |
+| `restore ID` | Validates first (hash, decrypt, per-object hashes, all references), then restores into a **new isolated** project and volumes. Refuses `paw-home` and any existing volume. Does not activate anything. |
+| `drill ID` | `restore`, then removes the target. Use after material changes. |
+
+Settings (environment): `PAW_HOME_ENV`, `PAW_BACKUP_ENDPOINT`, `PAW_BACKUP_BUCKET`, `PAW_BACKUP_ACCESS_KEY`,
+`PAW_BACKUP_SECRET_KEY`, `PAW_BACKUP_AGE_RECIPIENT`, optional `PAW_BACKUP_REGION`, `PAW_BACKUP_STAGING`
+(must be under `$HOME` for Docker Desktop on Linux), `PAW_BACKUP_KEEP_DAILY`, `PAW_BACKUP_KEEP_WEEKLY`.
+The destination is any S3-compatible bucket, so moving from the local stand-in to Cloudflare R2 is configuration only.
+
+Consistency argument: the original object is stored before its database row commits and objects are never deleted,
+so a dump taken first and an object export taken after hold every object the dump references. Restore re-checks this.
+
+Limits: the whole backup is held in memory while encrypting, so it suits small data sets (tens of MB to low GB)
+and needs streaming before it is used for large ones. Not scheduled yet (no timer or missed-run catch-up).
+The `age` private key is the only way to read a backup: losing it makes every backup unreadable.
+
+### Evidence (2026-11-01, dev laptop, throwaway stack, local S3 stand-in as destination)
+
+| Test | Result |
+|---|---|
+| Backup of 2 documents / 2 objects | complete in 4.6 s, 7.4 kB encrypted, staging cleaned, worker restarted |
+| D-T13 isolated restore (drill) | restored same migration revision and document count, objects verified, 21.5 s including stack start; live stack untouched |
+| D-T28 bad credentials / unreachable destination | fails before changing anything; nothing marked complete; worker running |
+| D-T29 corrupt blob | rejected on hash, no volumes created |
+| D-T29 set with an object removed | rejected, no volumes created |
+| Wrong decryption key | rejected, no volumes created |
+| Restore into live project name | refused |
+| Retention (keep 2 of 4) | pruned the two oldest |
+
+Not tested: real R2, a restore on a second machine, backups while uploads are in flight, large data, scheduling,
+disk-full, the RPO/RTO targets on the real laptop (the 21.5 s figure is for a tiny fixture, not a recovery-time claim),
+D-T14 (clean host rebuild), D-T37 (missed schedule). The drill restores to the same host; a different host is untested.
