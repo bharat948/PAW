@@ -74,7 +74,7 @@ Real Hermès: **19 passed, 1 expected failure**, stable over two consecutive run
 - **Adapter rule for `waiting_for_approval`:** treat as a fault. Deny via `/approval` (or stop) and fail the run with a typed error. With `trust: full` it should never occur, so it also indicates mis-configuration and fails readiness.
 - Approvals for external writes stay entirely inside PAW (D207): the gateway returns `APPROVAL_REQUIRED`; Hermès's own approval path is not used.
 
-**ADR-203 (OpenAI replaces OpenRouter for now)**: `model.provider: openai-api`, `model.default: gpt-4o-mini`, `OPENAI_API_KEY` in `HERMES_HOME/.env`. Works. Cost backstop is an OpenAI project budget; use a dedicated project key before real use.
+**ADR-203 (OpenAI replaces OpenRouter for now)**: `model.provider: openai-api`, `model.default: gpt-4o-mini`, `OPENAI_API_KEY` in `HERMES_HOME/.env`. Works. Cost backstop is an OpenAI project budget; use a dedicated project key before real use. Owner decision: OpenRouter may be added later, so provider and model stay profile settings and the egress allow-list is per provider (see plan.md section 3).
 
 **Cost note:** unlocked, every run sent about 10.4k input tokens of native tool schemas; locked about 0.6k; locked with two MCP tools about 2.3k. Budget accounting must use the reported `usage`.
 

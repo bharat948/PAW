@@ -54,6 +54,12 @@ thin, and a few things the spec does not account for.
 | Hard credit limit on the key is the final cost backstop | OpenAI has no per-key hard cap by default: set a **monthly budget limit on the OpenAI project** and use a **separate project key for Hermès**, not the PAW embeddings key. Until then the only cap is the prepaid balance |
 | Model choice | any OpenAI chat model with at least 64k context (gpt-4o-mini has 128k) |
 
+**Owner decision (2026-11-02): OpenAI now, OpenRouter can be added later.** Keep the provider swappable: the provider and model
+are ActorProfile settings (002C), never hard-coded; the entrypoint already accepts `OPENROUTER_API_KEY`; the egress allow-list is
+per-provider configuration (`api.openai.com` now, `openrouter.ai` when enabled); cost rate cards (`ops_rate_cards`) are keyed by
+model so a second provider adds rows, not code. Switching is a profile version change, so the contract suite and live evals must be
+rerun for the new provider/model before it is activated.
+
 Interim state: S0 may reuse the key in `paw-server/.env` on the owner's laptop only. Do not copy it into CI or the home install;
 create a dedicated project key first.
 
