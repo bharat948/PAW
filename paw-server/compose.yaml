@@ -16,6 +16,9 @@ x-api-env: &api-env
   PAW_EMBEDDING_PROVIDER: ${PAW_EMBEDDING_PROVIDER:-fake}
   PAW_EMBEDDING_MODEL: ${PAW_EMBEDDING_MODEL:-fake-hash-v1}
   PAW_EMBEDDING_API_KEY: ${PAW_EMBEDDING_API_KEY:-}
+  PAW_LLM_PROVIDER: ${PAW_LLM_PROVIDER:-fake}
+  PAW_LLM_MODEL: ${PAW_LLM_MODEL:-gpt-4o-mini}
+  PAW_LLM_API_KEY: ${PAW_LLM_API_KEY:-}
   PAW_CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
 
 services:

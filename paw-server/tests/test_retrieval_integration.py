@@ -297,3 +297,59 @@ def test_live_semantic_synonym_smoke(env):
     time.sleep(0)
     top = search(c, "vehicle maintenance guide").json()["results"][0]
     assert top["document_id"] == ids["car.txt"]
+
+
+def test_prefix_match_finds_compound_words_without_noise(env):
+    """'twin specification' must find a doc titled 'TwinMind ... Specification', not every 'specification'."""
+    c = env.client()
+    mind = upload(
+        c, "twinmind.txt", b"TwinMind app UI Specification and design notes.", "text/plain"
+    ).json()
+    upload(
+        c,
+        "noise.txt",
+        b"Interface specification for the gateway. Another specification clause.",
+        "text/plain",
+    )
+    env.drain(env.worker())
+    body = search(c, "twin specification").json()
+    assert body["results"][0]["document_id"] == mind["id"]
+    assert (
+        body["meta"]["candidates"]["keyword"] == 1
+    )  # prefix-AND stops before the noisy OR fallback
+    assert [r["document_name"] for r in search(c, "specification").json()["results"]].count(
+        "noise.txt"
+    ) == 1
+
+
+def test_excerpt_centres_on_the_match(env):
+    c = env.client(excerpt_chars=100, chunk_size=1200, chunk_overlap=100)
+    body = (
+        "Filler sentence number one. " * 25
+        + "The zebracrossing marker is here. "
+        + "More filler text. " * 25
+    ).encode()
+    upload(c, "long.txt", body, "text/plain")
+    env.drain(env.worker(chunk_size=1200, chunk_overlap=100))
+    r = search(c, "zebracrossing").json()["results"][0]
+    assert "zebracrossing" in r["excerpt"] and r["excerpt_start"] > 0 and r["excerpt_truncated"]
+    assert r["excerpt"].startswith("zebracrossing") is False  # has leading context
+
+
+def test_search_meta_reports_demo_embeddings(corpus):
+    c, _ = corpus
+    meta = search(c, "sourdough starter").json()["meta"]
+    assert meta["semantic"] is False and meta["embedding_model"] == "fake-hash-v1"
+
+
+def test_one_large_document_cannot_flood_results(env):
+    c = env.client()
+    big = "\n\n".join(
+        f"Paragraph {i} about widgets and gadgets with plenty of padding text to fill a chunk. " * 6
+        for i in range(30)
+    )
+    upload(c, "big.txt", big.encode(), "text/plain")
+    upload(c, "small.txt", b"A short note about widgets.", "text/plain")
+    env.drain(env.worker())
+    names = [r["document_name"] for r in search(c, "widgets", top_k=10).json()["results"]]
+    assert names.count("big.txt") <= 3 and "small.txt" in names

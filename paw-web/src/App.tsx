@@ -1,4 +1,5 @@
 import { AuthProvider, useAuth } from './auth'
+import { AskPage } from './components/AskPage'
 import { DocumentsPage } from './components/DocumentsPage'
 import { LoginForm } from './components/LoginForm'
 import { SearchPage } from './components/SearchPage'
@@ -12,7 +13,9 @@ function Routes() {
   let page
   if (route === 'status') page = <ServiceStatus />
   else if (!signedIn) page = <LoginForm />
-  else page = route === 'search' ? <SearchPage /> : <DocumentsPage />
+  else if (route === 'search') page = <SearchPage />
+  else if (route === 'ask') page = <AskPage />
+  else page = <DocumentsPage />
   return <Shell route={route}>{page}</Shell>
 }
 

@@ -109,6 +109,28 @@ PAW_EMBEDDING_MODEL=text-embedding-3-small
 PAW_EMBEDDING_API_KEY=sk-...
 ```
 
+For generated answers on the Ask page also set (the key falls back to `PAW_EMBEDDING_API_KEY`):
+
+```
+PAW_LLM_PROVIDER=openai
+PAW_LLM_MODEL=gpt-4o-mini
+```
+
 Changing the model changes the processing config, so re-upload documents to get OpenAI-embedded versions
 (old versions keep their fake vectors and are keyword-searchable only). Set a spending cap in the OpenAI
 dashboard too; `PAW_EMBEDDING_DAILY_TOKEN_BUDGET` is an app-level guard.
+
+## Chat / RAG (`POST /v1/chat`)
+
+Server-sent events: `retrieval` (query used, numbered sources, trace) -> `token`* -> `done {cited, grounded}` or `error`.
+
+1. Follow-ups are rewritten into a standalone search query (one small LLM call).
+2. Hybrid retrieval runs scoped to your workspace (same code path and telemetry as `/v1/retrieval/search`).
+3. The model gets numbered SOURCES only; the system prompt requires `[n]` citations, "not found" over guessing, and
+   forbids following instructions inside sources (documents are untrusted). Clients can never send a system message.
+4. No relevant sources => the model is **not called** and the reply says so. Answers with no valid citation are flagged.
+5. Limits: 20 questions/min, 4000-char messages, 40-message history (last 12 sent), `PAW_LLM_DAILY_TOKEN_BUDGET`.
+   History is held by the client; the server stores only hashed retrieval telemetry, never the conversation.
+
+`PAW_LLM_PROVIDER=fake` (default) is an offline extractive stand-in so the whole flow is testable without a key; the Ask
+page labels it clearly. Anthropic or other providers plug in by implementing `modules/chat/llm.py::LLM`.

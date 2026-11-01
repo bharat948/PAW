@@ -22,7 +22,15 @@ def estimate_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 4))
 
 
+_FILLER = frozenset(
+    "a an and are as at be by can do does for from has have how i in is it its my of on or "
+    "that the their there these this to was what when where which who why will with you your".split()
+)
+
+
 class FakeEmbedder:
+    semantic = False  # lexical hashing only: no real meaning; the UI says so
+
     """Deterministic hashed bag-of-words (no network, no cost). Shares vocabulary => similar vectors."""
 
     def __init__(self, model: str = "fake-hash-v1", dim: int = 1536) -> None:
@@ -33,6 +41,8 @@ class FakeEmbedder:
         for t in texts:
             v = [0.0] * self.dim
             for tok in re.findall(r"\w+", t.lower()):
+                if tok in _FILLER:
+                    continue  # filler words would make every passage look 'similar'
                 h = int.from_bytes(hashlib.sha256(tok.encode()).digest()[:8], "big")
                 v[h % self.dim] += 1.0 if (h >> 63) == 0 else -1.0
             norm = math.sqrt(sum(x * x for x in v)) or 1.0
@@ -41,6 +51,7 @@ class FakeEmbedder:
 
 
 class OpenAICompatEmbedder:
+    semantic = True
     """OpenAI-compatible /embeddings endpoint with timeout and retry classification."""
 
     def __init__(

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ApiError, getToken, listDocuments, setToken } from '../api/client'
 import { useAuth } from '../auth'
+import { IconLogo } from './icons'
 
 export function LoginForm() {
   const { signIn } = useAuth()
@@ -30,26 +31,34 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={submit} className="card" aria-labelledby="login-h">
-      <h1 id="login-h">Sign in</h1>
-      <label htmlFor="token">Owner access token</label>
-      <input
-        id="token"
-        type="password"
-        autoComplete="off"
-        value={token}
-        onChange={(e) => setTok(e.target.value)}
-        required
-        aria-describedby={error ? 'login-err' : undefined}
-      />
-      {error && (
-        <p id="login-err" role="alert" className="error-text">
-          {error}
-        </p>
-      )}
-      <button type="submit" disabled={busy || !token.trim()}>
-        {busy ? 'Checking…' : 'Sign in'}
-      </button>
-    </form>
+    <div className="auth-wrap">
+      <div className="card auth-card">
+        <span className="brand-mark">
+          <IconLogo size={26} />
+        </span>
+        <h1 id="login-h">Sign in</h1>
+        <p className="muted">Upload documents, watch them get indexed, and search them with sources.</p>
+        <form onSubmit={submit} aria-labelledby="login-h">
+          <label htmlFor="token">Owner access token</label>
+          <input
+            id="token"
+            type="password"
+            autoComplete="off"
+            value={token}
+            onChange={(e) => setTok(e.target.value)}
+            required
+            aria-describedby={error ? 'login-err' : undefined}
+          />
+          {error && (
+            <p id="login-err" role="alert" className="error-text">
+              {error}
+            </p>
+          )}
+          <button type="submit" className="primary" disabled={busy || !token.trim()}>
+            {busy ? 'Checking…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+    </div>
   )
 }

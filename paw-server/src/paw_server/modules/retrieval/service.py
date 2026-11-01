@@ -21,6 +21,7 @@ from paw_server.modules.ingestion.errors import IngestError
 from paw_server.modules.ingestion.jobs import Conn
 from paw_server.modules.ingestion.models import Actor
 from paw_server.modules.ingestion.pipeline import vec_literal
+from paw_server.modules.retrieval.excerpt import query_terms
 
 log = logging.getLogger("paw.retrieval")
 
@@ -65,6 +66,8 @@ class SearchOutcome:
     latency_ms: float
     candidates: dict[str, int]
     event_id: UUID | None = None
+    embedding_model: str = ""
+    semantic: bool = True
 
 
 def fuse(keyword: list[Hit], vector: list[Hit], weights: dict[str, float], k: int) -> list[Hit]:
@@ -91,22 +94,46 @@ def fuse(keyword: list[Hit], vector: list[Hit], weights: dict[str, float], k: in
     )
 
 
+def cap_per_document(hits: list[Hit], limit: int) -> list[Hit]:
+    """Keep at most `limit` passages per document so one large file cannot crowd out the rest."""
+    seen: dict[UUID, int] = {}
+    out: list[Hit] = []
+    for h in hits:
+        n = seen.get(h.row["document_id"], 0)
+        if n < limit:
+            seen[h.row["document_id"]] = n + 1
+            out.append(h)
+    return out
+
+
 _COLS = """c.id, c.version_id, c.ordinal, c.text, c.page_number, c.section, c.source_start,
            c.source_end, c.metadata, d.id AS document_id, d.display_name, d.media_type"""
 
 
 def _keyword(conn: Conn, ws: UUID, docs: list[UUID] | None, q: str, limit: int) -> list[Hit]:
-    """Strict AND match first (precise); if nothing matches, relax to OR-of-terms ranked by ts_rank_cd."""
-    tsq = {
-        "strict": "websearch_to_tsquery('english', %(q)s)",
-        "relaxed": "replace(plainto_tsquery('english', %(q)s)::text, '&', '|')::tsquery",
-    }
-    for mode in ("strict", "relaxed"):
+    """Progressively looser lexical match, stopping at the first mode that finds anything:
+
+    1. strict: every word, exact lexemes (websearch syntax: quotes, -, OR all work)
+    2. prefix-AND: every word as a prefix ('twin' also finds 'TwinMind')
+    3. prefix-OR: any word as a prefix, ranked by how many match
+    """
+    terms = query_terms(q)
+    prefix = ["'" + t + "':*" for t in terms]
+    modes: list[tuple[str, str, str | None]] = [
+        ("strict", "websearch_to_tsquery('english', %(q)s)", None),
+    ]
+    if terms:
+        modes += [
+            ("prefix_and", "to_tsquery('english', %(pq)s)", " & ".join(prefix)),
+            ("prefix_or", "to_tsquery('english', %(pq)s)", " | ".join(prefix)),
+        ]
+    rows: list[dict[str, Any]] = []
+    for _mode, tsq, pq in modes:
         rows = conn.execute(
-            f"""SELECT {_COLS}, ts_rank_cd(c.tsv, {tsq[mode]}) AS score
-                {_ACTIVE} AND c.tsv @@ {tsq[mode]}
+            f"""SELECT {_COLS}, ts_rank_cd(c.tsv, {tsq}, 1) AS score
+                {_ACTIVE} AND c.tsv @@ {tsq}
                 ORDER BY score DESC, c.id LIMIT %(lim)s""",
-            {"ws": ws, "docs": docs, "q": q, "lim": limit},
+            {"ws": ws, "docs": docs, "q": q, "pq": pq, "lim": limit},
         ).fetchall()
         conn.commit()
         if rows:
@@ -199,7 +226,7 @@ def search(
             )
             conn.commit()
 
-        hits = fuse(kw, vc, weights, s.rrf_k)[:top_k]
+        hits = cap_per_document(fuse(kw, vc, weights, s.rrf_k), s.search_max_per_document)[:top_k]
         methods = ["keyword"] + (["vector"] if vec is not None else [])
         latency = (time.perf_counter() - t0) * 1000
         event_id = conn.execute(
@@ -238,4 +265,6 @@ def search(
         round(latency, 1),
         {"keyword": len(kw), "vector": len(vc)},
         event_id,
+        embedding_model=embedder.model,
+        semantic=getattr(embedder, "semantic", True),
     )

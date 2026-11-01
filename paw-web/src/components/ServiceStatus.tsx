@@ -1,24 +1,27 @@
 import { useReadiness } from '../hooks/useReadiness'
 import { ErrorState } from './ErrorState'
-import { Loading } from './Loading'
+import { Skeleton } from './Skeleton'
 
 export function ServiceStatus() {
   const { state, refresh } = useReadiness()
 
-  if (state.phase === 'loading') return <Loading label="Checking service status…" />
+  if (state.phase === 'loading')
+    return (
+      <div role="status" aria-label="Checking service status">
+        <h1>Service status</h1>
+        <p className="visually-hidden">Checking service status…</p>
+        <div className="card"><Skeleton lines={2} /></div>
+      </div>
+    )
 
   if (state.phase === 'ready') {
     return (
       <section aria-labelledby="status-h">
         <h1 id="status-h">Service status</h1>
-        <ul className="checks" role="status">
-          <li>
-            <span className="dot ok" aria-hidden="true" /> Backend: ready
-          </li>
-          <li>
-            <span className="dot ok" aria-hidden="true" /> Database: ready
-          </li>
-        </ul>
+        <div className="card stack" role="status">
+          <div><span className="pill ok">Backend: ready</span></div>
+          <div><span className="pill ok">Database: ready</span></div>
+        </div>
       </section>
     )
   }

@@ -7,7 +7,6 @@ const LABEL: Record<DocStatus, string> = {
 }
 
 export function StatusBadge({ status }: { status: DocStatus }) {
-  const kind =
-    status === 'COMPLETED' ? 'ok' : status === 'FAILED' || status === 'UNSUPPORTED' ? 'bad' : 'busy'
-  return <span className={`badge ${kind}`}>{LABEL[status]}</span>
+  const kind = status === 'COMPLETED' ? 'ok' : status === 'FAILED' ? 'bad' : status === 'UNSUPPORTED' ? 'warn' : 'busy'
+  return <span className={`pill ${kind}`}>{LABEL[status]}</span>
 }

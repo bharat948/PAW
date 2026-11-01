@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from paw_server.api.deps import CurrentActor
 from paw_server.core.errors import ApiError
 from paw_server.modules.retrieval import service
+from paw_server.modules.retrieval.excerpt import make_excerpt, query_terms
 from paw_server.modules.retrieval.service import DEFAULT_FUSION, FUSION_VERSIONS
 
 router = APIRouter(tags=["retrieval"])
@@ -65,7 +66,8 @@ class SearchResult(BaseModel):
     document_name: str
     media_type: str
     excerpt: str
-    excerpt_truncated: bool
+    excerpt_start: int  # char offset of the excerpt inside the passage (0 = passage start)
+    excerpt_truncated: bool  # more passage text follows the excerpt
     retrieval_method: str
     source: SourceLocation
     scores: Scores
@@ -75,6 +77,8 @@ class SearchMeta(BaseModel):
     query_id: UUID | None
     fusion_version: str
     methods_used: list[str]
+    embedding_model: str
+    semantic: bool  # False => demo embeddings: vector results are not meaningful
     degraded: str | None
     latency_ms: float
     candidates: dict[str, int]
@@ -100,11 +104,13 @@ def search(request: Request, actor: CurrentActor, body: SearchRequest) -> Search
         document_ids=body.document_ids,
         fusion_version=body.fusion_version,
     )
+    terms = query_terms(body.query)
     results = []
     for h in out.hits:
         r = h.row
         text: str = r["text"]
         md = r["metadata"] or {}
+        excerpt, start = make_excerpt(text, terms, s.excerpt_chars)
         results.append(
             SearchResult(
                 document_id=r["document_id"],
@@ -112,8 +118,9 @@ def search(request: Request, actor: CurrentActor, body: SearchRequest) -> Search
                 chunk_id=h.chunk_id,
                 document_name=r["display_name"],
                 media_type=r["media_type"],
-                excerpt=text[: s.excerpt_chars],
-                excerpt_truncated=len(text) > s.excerpt_chars,
+                excerpt=excerpt,
+                excerpt_start=start,
+                excerpt_truncated=start + len(excerpt) < len(text),
                 retrieval_method=h.method,
                 source=SourceLocation(
                     page_number=r["page_number"],
@@ -139,6 +146,8 @@ def search(request: Request, actor: CurrentActor, body: SearchRequest) -> Search
             query_id=out.event_id,
             fusion_version=out.fusion_version,
             methods_used=out.methods,
+            embedding_model=out.embedding_model,
+            semantic=out.semantic,
             degraded=out.degraded,
             latency_ms=out.latency_ms,
             candidates=out.candidates,

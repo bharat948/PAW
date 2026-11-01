@@ -84,3 +84,23 @@ def test_json_and_jsonl_flatten_nested():
 def test_header_only_csv_unsupported():
     with pytest.raises(UnsupportedDocument):
         run(b"a,b\n", Format.CSV)
+
+
+def test_excerpt_centres_on_match_and_cap_per_document():
+    import uuid
+
+    from paw_server.modules.retrieval.excerpt import make_excerpt, query_terms
+    from paw_server.modules.retrieval.service import Hit, cap_per_document
+
+    text = (
+        ("filler words here. " * 60) + "The twin specification lives here. " + ("tail text. " * 60)
+    )
+    ex, start = make_excerpt(text, query_terms("twin specification"), 300)
+    assert "twin specification" in ex and start > 0 and len(ex) <= 300
+    assert make_excerpt("short text", ["x"], 300) == ("short text", 0)
+    assert make_excerpt(text, ["zzz"], 300)[1] == 0  # no match: start of passage
+
+    d1, d2 = uuid.uuid4(), uuid.uuid4()
+    hits = [Hit(uuid.uuid4(), row={"document_id": d}) for d in (d1, d1, d1, d1, d2)]
+    capped = cap_per_document(hits, 3)
+    assert [h.row["document_id"] for h in capped] == [d1, d1, d1, d2]

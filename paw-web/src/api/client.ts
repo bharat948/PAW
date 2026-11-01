@@ -183,6 +183,7 @@ export interface SearchResult {
   document_name: string
   media_type: string
   excerpt: string
+  excerpt_start?: number
   excerpt_truncated: boolean
   retrieval_method: 'hybrid' | 'keyword' | 'vector'
   source: {
@@ -205,6 +206,8 @@ export interface SearchResponse {
   meta: {
     fusion_version: string
     methods_used: string[]
+    semantic?: boolean
+    embedding_model?: string
     degraded: string | null
     latency_ms: number
     score_note: string
@@ -235,6 +238,20 @@ export interface ChunkDetail {
   previous_chunk_id: string | null
   next_chunk_id: string | null
 }
+export interface ChunkOut {
+  id: string
+  ordinal: number
+  text: string
+  page_number: number | null
+  section: string | null
+  source_start: number | null
+  source_end: number | null
+  metadata: Record<string, unknown>
+}
+export const listChunks = (docId: string, versionId: string, limit = 20) =>
+  request<{ items: ChunkOut[]; next_cursor: number | null }>(
+    `/v1/documents/${docId}/chunks?version_id=${versionId}&limit=${limit}`,
+  )
 export const getChunk = (id: string) => request<ChunkDetail>(`/v1/chunks/${id}`)
 
 /** Authenticated download (the endpoint needs the bearer header, so a plain link would fail). */
@@ -256,3 +273,110 @@ export async function downloadOriginal(originalUrl: string, filename: string): P
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// ---- chat (RAG) ----
+export interface ChatSource {
+  n: number
+  chunk_id: string
+  document_id: string
+  document_name: string
+  label: string
+  excerpt: string
+  method: 'hybrid' | 'keyword' | 'vector'
+  scores: { fused: number; keyword_rank: number | null; vector_rank: number | null }
+}
+export interface RetrievalEvent {
+  query_used: string
+  rewritten: boolean
+  meta: {
+    methods_used: string[]
+    semantic: boolean
+    embedding_model: string
+    degraded: string | null
+    latency_ms: number
+    candidates: { keyword: number; vector: number }
+    llm_model: string
+    generative: boolean
+  }
+  sources: ChatSource[]
+}
+export interface DoneEvent {
+  cited: number[]
+  grounded: boolean
+  reason: string | null
+}
+export interface ChatHandlers {
+  onRetrieval: (e: RetrievalEvent) => void
+  onToken: (text: string) => void
+  onDone: (e: DoneEvent) => void
+  onError: (e: { code: string; message: string }) => void
+}
+export interface ChatTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/** POST + server-sent events over fetch (EventSource cannot send an Authorization header). */
+export async function streamChat(
+  messages: ChatTurn[],
+  opts: { topK: number; documentIds?: string[] },
+  h: ChatHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = getToken()
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/v1/chat`, {
+      method: 'POST',
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        messages,
+        top_k: opts.topK,
+        document_ids: opts.documentIds?.length ? opts.documentIds : undefined,
+      }),
+    })
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return
+    throw new ApiError(0, 'Unable to reach the PAW service.')
+  }
+  if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    throw toError(res.status, await res.json().catch(() => undefined))
+  }
+  if (!res.body) throw new ApiError(0, 'The response could not be streamed.')
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let i: number
+      while ((i = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        const ev = /^event: (.+)$/m.exec(frame)?.[1]
+        const data = /^data: (.+)$/m.exec(frame)?.[1]
+        if (!ev || !data) continue
+        const json: unknown = JSON.parse(data)
+        if (ev === 'retrieval') h.onRetrieval(json as RetrievalEvent)
+        else if (ev === 'token') h.onToken((json as { text: string }).text)
+        else if (ev === 'done') h.onDone(json as DoneEvent)
+        else if (ev === 'error') h.onError(json as { code: string; message: string })
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError') throw new ApiError(0, 'The answer stream was interrupted.')
+  }
+}
+
+/** Dev-only: the server rejects this outside local/ci environments. */
+export const clearAllData = () => request<{ documents_deleted: number }>('/v1/dev/data', { method: 'DELETE' })
+
+export const deleteDocument = (id: string) => request<void>(`/v1/documents/${id}`, { method: 'DELETE' })

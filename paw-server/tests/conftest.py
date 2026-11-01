@@ -68,12 +68,37 @@ class CountingEmbedder(FakeEmbedder):
         return super().embed(texts)
 
 
+class ScriptedLLM:
+    """Test double: records every prompt, replays a scripted answer, can fail on demand."""
+
+    model = "scripted"
+    generative = True
+
+    def __init__(self) -> None:
+        self.answer = ["The starter needs daily feeding ", "[1]."]
+        self.rewrite = "rewritten standalone query"
+        self.stream_calls: list[list[dict]] = []
+        self.complete_calls: list[list[dict]] = []
+        self.fail: Exception | None = None
+
+    def complete(self, messages, max_tokens):
+        self.complete_calls.append(messages)
+        return self.rewrite
+
+    def stream(self, messages, max_tokens):
+        self.stream_calls.append(messages)
+        if self.fail:
+            raise self.fail
+        yield from self.answer
+
+
 @dataclass
 class Env:
     url: str
     store: MemoryObjectStore
     embedder: CountingEmbedder
     overrides: dict = field(default_factory=dict)
+    llm: ScriptedLLM = field(default_factory=ScriptedLLM)
     _n: int = 0
 
     def settings(self, **kw) -> Settings:
@@ -92,7 +117,7 @@ class Env:
 
     def client(self, **kw) -> TestClient:
         c = TestClient(
-            create_app(self.settings(**kw), store=self.store, embedder=self.embedder),
+            create_app(self.settings(**kw), store=self.store, embedder=self.embedder, llm=self.llm),
             raise_server_exceptions=False,
         )
         c.__enter__()

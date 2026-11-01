@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, File, Header, Query, Request, UploadFile
+from fastapi import APIRouter, File, Header, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from paw_server.api.deps import CurrentActor
@@ -263,3 +263,20 @@ def list_chunks(
         items=[ChunkOut(**r) for r in page],
         next_cursor=page[-1]["ordinal"] if len(rows) > limit else None,
     )
+
+
+@router.delete("/{doc_id}", status_code=204)
+def delete_document(request: Request, actor: CurrentActor, doc_id: UUID) -> Response:
+    """Hard-delete a document with all its versions, chunks, jobs and events."""
+    ws = actor.workspace_id
+    with request.app.state.pool.connection() as conn:
+        _owned_document(conn, actor, doc_id)
+        ver = "(SELECT id FROM document_versions WHERE document_id = %s)"
+        conn.execute("UPDATE documents SET current_version_id = NULL WHERE id = %s", (doc_id,))
+        conn.execute(f"DELETE FROM document_chunks WHERE version_id IN {ver}", (doc_id,))
+        conn.execute(f"DELETE FROM ingestion_events WHERE version_id IN {ver}", (doc_id,))
+        conn.execute(f"DELETE FROM ingestion_jobs WHERE version_id IN {ver}", (doc_id,))
+        conn.execute("DELETE FROM document_versions WHERE document_id = %s", (doc_id,))
+        conn.execute("DELETE FROM documents WHERE id = %s AND workspace_id = %s", (doc_id, ws))
+        conn.commit()
+    return Response(status_code=204)

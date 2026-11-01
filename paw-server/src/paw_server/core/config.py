@@ -76,10 +76,25 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=64, ge=1)
     embedding_daily_token_budget: int = Field(default=2_000_000, ge=0)
 
+    # chat / RAG answers: provider adapter; "fake" is an offline extractive stand-in (no model)
+    llm_provider: Literal["fake", "openai"] = "fake"
+    llm_model: str = "gpt-4o-mini"
+    llm_api_base: str = "https://api.openai.com/v1"
+    llm_api_key: str = ""  # falls back to PAW_EMBEDDING_API_KEY when empty
+    llm_timeout_s: float = Field(default=60.0, gt=0)
+    llm_max_output_tokens: int = Field(default=700, ge=16)
+    llm_daily_token_budget: int = Field(default=500_000, ge=0)
+    chat_rate_limit_per_min: int = Field(default=20, ge=1)
+    chat_source_chars: int = Field(default=1500, ge=100)  # per-source context cap
+    chat_max_history: int = Field(default=12, ge=0)
+
     # retrieval
     search_rate_limit_per_min: int = Field(default=60, ge=1)
     search_candidates: int = Field(default=50, ge=1, le=200)
     vector_max_distance: float = Field(default=0.75, gt=0, le=2)  # cosine; drops irrelevant vectors
+    search_max_per_document: int = Field(
+        default=3, ge=1
+    )  # keeps one big file from flooding results
     rrf_k: int = Field(default=60, ge=1)
     excerpt_chars: int = Field(default=500, ge=50)
 
@@ -108,6 +123,10 @@ class Settings(BaseSettings):
         if self.embedding_dim != 1536:
             raise ValueError(
                 "PAW_EMBEDDING_DIM must be 1536 (schema vector(1536)); reindex to change"
+            )
+        if self.llm_provider == "openai" and not (self.llm_api_key or self.embedding_api_key):
+            raise ValueError(
+                "PAW_LLM_API_KEY (or PAW_EMBEDDING_API_KEY) is required for the openai LLM"
             )
         if self.embedding_provider == "openai" and not self.embedding_api_key:
             raise ValueError("PAW_EMBEDDING_API_KEY is required for the openai provider")

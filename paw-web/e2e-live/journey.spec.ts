@@ -20,14 +20,21 @@ test('upload a document, see it processed, find a known fact, open its source', 
     mimeType: 'text/markdown',
     buffer: Buffer.from(`# Field notes\nThe secret marker is ${fact} and it lives under the old bridge.\n`),
   })
-  await expect(page.getByText(`${name} uploaded`)).toBeVisible()
+  const queued = page.getByRole('list', { name: 'Upload queue' }).getByRole('listitem').filter({ hasText: name })
+  await expect(queued).toContainText('Indexing in the background')
 
   const row = page.getByRole('row').filter({ hasText: name })
-  await expect(row.getByText('Ready')).toBeVisible({ timeout: 30_000 })
+  await expect(row.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 })
 
   // durable status survives a reload
   await page.reload()
-  await expect(page.getByRole('row').filter({ hasText: name }).getByText('Ready')).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: name }).getByText('Ready', { exact: true })).toBeVisible()
+
+  // opening the drawer shows the processing timeline
+  await page.getByRole('button', { name }).click()
+  await page.getByRole('tab', { name: 'Timeline' }).click()
+  await expect(page.getByRole('dialog', { name: 'Document details' })).toContainText('COMPLETED')
+  await page.keyboard.press('Escape')
 
   await page.getByRole('link', { name: 'Search' }).click()
   await page.getByLabel('Search your documents').fill(fact)
@@ -40,6 +47,9 @@ test('upload a document, see it processed, find a known fact, open its source', 
   const source = page.getByRole('complementary', { name: 'Source passage' })
   await expect(source).toContainText(name)
   await expect(source.locator('pre')).toContainText(fact)
+
+  await page.keyboard.press('Escape') // dismiss the source panel
+  await expect(source).toBeHidden()
 
   // no-match query is handled gracefully
   await page.getByLabel('Search your documents').fill('qqqzzzxxxnothing')
