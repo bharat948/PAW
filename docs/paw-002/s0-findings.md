@@ -6,8 +6,7 @@ Runtime under test: **Hermes Agent v0.22.5+3239.gc7da41d** (`main` commit `c7da4
 provider `openai-api`, model `gpt-4o-mini`, interim OpenAI key (plan.md section 3), MCP SDK 2.3.0 (client and stub).
 
 **Status: Q1, Q2, Q3, Q4, Q6, Q7, Q8, Q9, Q10 answered. Q5 (deterministic readiness probe) and Q11 (outbound traffic) remain open.**
-Neither blocks the spec's stop-and-re-plan rule (that is Q1 and Q2, both pass). The ADRs below are **drafts** until the owner
-accepts them; production code (002A) may start once the two open items are either closed or consciously deferred.
+Neither blocks the spec's stop-and-re-plan rule (that is Q1 and Q2, both pass). The ADRs below were accepted by the owner on 2026-11-02; 002A may start, with Q5 and Q11 closed inside it.
 
 ## 1. Result summary
 
@@ -59,7 +58,13 @@ Real Hermès: **19 passed, 1 expected failure**, stable over two consecutive run
 | Hook, allowed call | Hook receives `mcp__paw__paw_echo`, the same name as in events |
 | Unlocked + MCP | With native toolsets on, the model did not use the PAW tool at all (it tried `manage_connections` instead). Not explained; irrelevant while locked, but unlocked runs are not a valid test bed for MCP |
 
-## 4. Consequences for the design (drafts)
+## 4. Consequences for the design (ACCEPTED by the owner, 2026-11-02)
+
+**Owner decisions recorded:** ADR-201, ADR-202, ADR-203 below and ADR-204 (keep UUIDs, one schema with module-prefixed tables, the
+existing sync psycopg layer; the spec's ULIDs and schema-per-module are a recorded deviation) are accepted. Document text retrieved
+by the agent may be sent to the model provider (same as Ask today); no per-document opt-out for now. Spec O1 to O4 follow the
+recommendations in plan.md (Gmail after M2; no self-editing profile; auto-continue after approval by default; model gpt-4o-mini
+with $0.50 per run and $3 per day, to be revisited after measuring cost). Q5 (canary) and Q11 remain to be closed inside 002A.
 
 **ADR-201 (session authority): confirm D202 with amendments**
 1. Render prior turns as compact text, not OpenAI tool messages; tool exchanges become text such as `[tool X returned ...]`; the assembler tests pin this format.
