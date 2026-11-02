@@ -63,7 +63,7 @@ Nothing below is built unless stated; S0 has not been run against a real Hermès
 
 **Goal:** start, stream, cancel and account for Admin Hermès runs; every event durable before the browser sees it.
 
-**Depends on:** S0 pass (and its captured event schema). **Migration 0005.**
+**Depends on:** S0 pass (and its captured event schema). **Migration 0006** (0005 is auth sessions from 001D-06; later phases shift by one: 002B 0007, 002C 0008, 002D 0009, 002F 0011).
 
 **Data**
 - `agent_runtimes(id, actor_id, hermes_version, image_digest, status, last_health_at, reported_hashes)` (one row, concurrency 1)
