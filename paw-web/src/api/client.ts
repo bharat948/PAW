@@ -43,6 +43,14 @@ export const setToken = (t: string | null) => {
 }
 export const UNAUTHORIZED_EVENT = 'paw:unauthorized'
 
+// Google sign-in uses an HttpOnly session cookie. The CSRF token (from /v1/auth/me) is kept in memory only and
+// sent on every write; it is useless to another site because it is never in a cookie.
+let csrfToken: string | null = null
+export const setCsrf = (t: string | null) => {
+  csrfToken = t
+}
+const isWrite = (method?: string) => !!method && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
+
 function isEnvelope(x: unknown): x is ErrorEnvelope {
   return (
     typeof x === 'object' &&
@@ -66,9 +74,10 @@ async function request<T>(
   headers.set('Accept', 'application/json')
   const token = getToken()
   if (opts.auth !== false && token) headers.set('Authorization', `Bearer ${token}`)
+  if (isWrite(init.method) && csrfToken && !headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', csrfToken)
   let res: Response
   try {
-    res = await fetch(`${opts.base ?? API_BASE_URL}${path}`, { ...init, headers })
+    res = await fetch(`${opts.base ?? API_BASE_URL}${path}`, { ...init, headers, credentials: 'include' })
   } catch {
     throw new ApiError(0, 'Unable to reach the PAW service.')
   }
@@ -79,6 +88,26 @@ async function request<T>(
   }
   return body as T
 }
+
+// ---- authentication (Google sign-in; see paw-server api/auth.py) ----
+export interface AuthConfig {
+  mode: 'token' | 'google' | 'both'
+  google: boolean
+}
+export const getAuthConfig = () => request<AuthConfig>('/v1/auth/config', {}, { auth: false })
+
+export type Me =
+  | { mode: 'token' }
+  | { mode: 'session'; email: string; csrf_token: string; expires_at: string; authenticated_at: string; stepup_valid: boolean }
+/** auth:false = no bearer header and no global sign-out event on 401: this is a probe, a 401 just means "not signed in". */
+export const getMeQuiet = () => request<Me>('/v1/auth/me', {}, { auth: false })
+export const logout = (csrf: string) =>
+  request<void>('/v1/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrf } }, { auth: false })
+
+/** Full-page navigations (Google needs a real redirect, not fetch). return_to must be a same-site path. */
+export const googleSignInUrl = (returnTo = '/') =>
+  `${API_BASE_URL}/v1/auth/google/start?return_to=${encodeURIComponent(returnTo)}`
+export const stepUpUrl = (returnTo = '/') => `${googleSignInUrl(returnTo)}&purpose=stepup`
 
 // ---- readiness (public) ----
 export interface Readiness {
@@ -152,8 +181,10 @@ export function uploadDocument(file: File, onProgress: (pct: number) => void): P
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', `${API_BASE_URL}/v1/documents`)
+    xhr.withCredentials = true
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken)
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100))
     xhr.onerror = () => reject(new ApiError(0, 'Unable to reach the PAW service.'))
     xhr.onload = () => {
@@ -260,6 +291,7 @@ export async function downloadOriginal(originalUrl: string, filename: string): P
   let res: Response
   try {
     res = await fetch(`${API_BASE_URL}${originalUrl}`, {
+      credentials: 'include',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
   } catch {
@@ -329,10 +361,12 @@ export async function streamChat(
     res = await fetch(`${API_BASE_URL}/v1/chat`, {
       method: 'POST',
       signal,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
       },
       body: JSON.stringify({
         messages,

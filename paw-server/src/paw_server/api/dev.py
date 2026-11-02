@@ -22,7 +22,9 @@ def reset_data(request: Request, actor: CurrentActor) -> ResetResponse:
     ws = actor.workspace_id
     with request.app.state.pool.connection() as conn:
         ver = "(SELECT id FROM document_versions WHERE workspace_id = %s)"
-        conn.execute("UPDATE documents SET current_version_id = NULL WHERE workspace_id = %s", (ws,))
+        conn.execute(
+            "UPDATE documents SET current_version_id = NULL WHERE workspace_id = %s", (ws,)
+        )
         conn.execute(f"DELETE FROM document_chunks WHERE version_id IN {ver}", (ws,))
         conn.execute(f"DELETE FROM ingestion_events WHERE version_id IN {ver}", (ws,))
         conn.execute("DELETE FROM ingestion_jobs WHERE workspace_id = %s", (ws,))

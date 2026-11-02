@@ -72,7 +72,7 @@ it('sends signed-out users to the login form and rejects bad tokens', async () =
   const env = { code: 'unauthenticated', message: 'Authentication is required.', correlation_id: 'c', retryable: false }
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(env, { status: 401 }))
   render(<App />)
-  await userEvent.type(screen.getByLabelText(/owner access token/i), 'wrong-token-wrong-token')
+  await userEvent.type(await screen.findByLabelText(/owner access token/i), 'wrong-token-wrong-token')
   await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
   expect(await screen.findByRole('alert')).toHaveTextContent(/not accepted/i)
 })

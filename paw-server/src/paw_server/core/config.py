@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     # auth (single owner; D006)
     owner_token: str = Field(min_length=16)
 
+    # authentication (PAW-001D-06). token = the dev owner token only; google = Google sign-in only; both = either
+    auth_mode: Literal["token", "google", "both"] = "token"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    allowed_emails: Annotated[
+        list[str], NoDecode
+    ] = []  # Google accounts allowed to sign in as the owner
+    api_public_url: str = (
+        "http://localhost:8000"  # browser-visible API origin (OAuth redirect base)
+    )
+    web_url: str = "http://localhost:5173"  # where the browser lands after Google sign-in
+    session_ttl_s: int = Field(default=86400, ge=60)  # absolute session lifetime
+    session_idle_s: int = Field(default=14400, ge=60)  # sign out after this much inactivity
+    stepup_window_s: int = Field(
+        default=43200, ge=0
+    )  # recent-login window for sensitive actions (002F-R05: 12 h)
+
     # object storage (S3-compatible; D003)
     s3_endpoint_url: str | None = None
     s3_bucket: str = "paw-originals"
@@ -105,6 +122,17 @@ class Settings(BaseSettings):
     retry_base_s: float = Field(default=2.0, ge=0)
     retry_max_s: float = Field(default=300.0, ge=0)
 
+    @field_validator("allowed_emails", mode="before")
+    @classmethod
+    def _split_emails(cls, v: object) -> object:
+        """Accept a JSON list or a comma-separated string; compare case-insensitively."""
+        if isinstance(v, str):
+            v = v.strip()
+            v = json.loads(v) if v.startswith("[") else [e for e in v.split(",")]
+        if isinstance(v, list):
+            return [str(e).strip().lower() for e in v if str(e).strip()]
+        return v
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
@@ -130,6 +158,13 @@ class Settings(BaseSettings):
             )
         if self.embedding_provider == "openai" and not self.embedding_api_key:
             raise ValueError("PAW_EMBEDDING_API_KEY is required for the openai provider")
+        if self.auth_mode in ("google", "both") and not (
+            self.google_client_id and self.google_client_secret and self.allowed_emails
+        ):
+            raise ValueError(
+                "PAW_GOOGLE_CLIENT_ID, PAW_GOOGLE_CLIENT_SECRET and PAW_ALLOWED_EMAILS are required "
+                "when PAW_AUTH_MODE is google or both"
+            )
         if self.db_pool_min > self.db_pool_max:
             raise ValueError("PAW_DB_POOL_MIN must not exceed PAW_DB_POOL_MAX")
         if self.env in (Environment.STAGING, Environment.PRODUCTION, Environment.HOME):
@@ -143,6 +178,15 @@ class Settings(BaseSettings):
 
     def _check_home(self) -> None:
         """A home install holds real data: refuse dev defaults and placeholders at startup."""
+        if self.auth_mode != "google":
+            raise ValueError(
+                "PAW_AUTH_MODE must be google in the home environment (no owner token)"
+            )
+        for name in ("api_public_url", "web_url"):
+            if not getattr(self, name).startswith("https://"):
+                raise ValueError(
+                    f"PAW_{name.upper()} must be an https:// origin in the home environment"
+                )
         if not self.installation_id.strip():
             raise ValueError("PAW_INSTALLATION_ID is required in the home environment")
         if not (self.public_base_url or "").startswith("https://"):

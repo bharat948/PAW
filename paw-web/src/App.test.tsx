@@ -18,17 +18,19 @@ it('shows a safe unavailable state on 503 and retries', async () => {
     code: 'not_ready', message: 'x', correlation_id: 'abc123', retryable: true,
     details: [{ check: 'database', status: 'failing' }],
   }
-  const spy = vi
-    .spyOn(globalThis, 'fetch')
-    .mockResolvedValueOnce(Response.json(env, { status: 503 }))
-    .mockResolvedValueOnce(Response.json({ status: 'ready' }))
+  const unauth = { code: 'unauthenticated', message: 'x', correlation_id: 'c', retryable: false }
+  const readiness = [Response.json(env, { status: 503 }), Response.json({ status: 'ready' })]
+  // routed by URL: the session probe (/v1/auth/me) must not consume the scripted readiness responses
+  const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+    String(input).includes('/v1/auth/me') ? Response.json(unauth, { status: 401 }) : readiness.shift()!,
+  )
   window.location.hash = '#/status'
   render(<App />)
   expect(await screen.findByRole('alert')).toHaveTextContent(/database is not ready/i)
   expect(screen.getByText(/abc123/)).toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: /try again/i }))
   expect(await screen.findByText(/Backend: ready/)).toBeInTheDocument()
-  expect(spy).toHaveBeenCalledTimes(2)
+  expect(spy.mock.calls.filter(([u]) => String(u).includes('/ready'))).toHaveLength(2)
 })
 
 it('shows unreachable state when the network fails', async () => {

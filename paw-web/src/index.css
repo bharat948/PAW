@@ -60,6 +60,8 @@ button, .btn { font: inherit; font-weight: 600; font-size: .92rem; display: inli
 button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: .5; cursor: not-allowed; }
+.btn { text-decoration: none; }
+.auth-card .btn { width: 100%; margin-top: 1.25rem; }
 .primary { background: var(--grad); color: #fff; border-color: transparent; box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent); }
 .primary:hover:not(:disabled) { filter: brightness(1.06); border-color: transparent; }
 .ghost { border-color: transparent; background: transparent; color: var(--muted); }
