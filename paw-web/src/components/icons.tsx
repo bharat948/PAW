@@ -25,3 +25,4 @@ export const IconChat = (p: P) => <Svg {...p}><path d="M21 12a8 8 0 01-11.700 7L
 export const IconStop = (p: P) => <Svg {...p}><rect x="6" y="6" width="12" height="12" rx="2" /></Svg>
 export const IconSend = (p: P) => <Svg {...p}><path d="M4 12l16-8-6 16-2-7z" /></Svg>
 export const IconInfo = (p: P) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M12 11v5m0-8h.01" /></Svg>
+export const IconPlug = (p: P) => <Svg {...p}><path d="M9 3v5m6-5v5" /><path d="M6 8h12v3a6 6 0 01-12 0z" /><path d="M12 17v4" /></Svg>

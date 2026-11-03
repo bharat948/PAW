@@ -1,6 +1,7 @@
 import { AuthProvider, useAuth } from './auth'
 import { AskPage } from './components/AskPage'
 import { DocumentsPage } from './components/DocumentsPage'
+import { IntegrationsPage } from './components/IntegrationsPage'
 import { LoginForm } from './components/LoginForm'
 import { SearchPage } from './components/SearchPage'
 import { ServiceStatus } from './components/ServiceStatus'
@@ -16,6 +17,7 @@ function Routes() {
   else if (!signedIn) page = <LoginForm />
   else if (route === 'search') page = <SearchPage />
   else if (route === 'ask') page = <AskPage />
+  else if (route === 'integrations') page = <IntegrationsPage />
   else page = <DocumentsPage />
   return <Shell route={route}>{page}</Shell>
 }

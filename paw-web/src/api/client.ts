@@ -109,6 +109,35 @@ export const googleSignInUrl = (returnTo = '/') =>
   `${API_BASE_URL}/v1/auth/google/start?return_to=${encodeURIComponent(returnTo)}`
 export const stepUpUrl = (returnTo = '/') => `${googleSignInUrl(returnTo)}&purpose=stepup`
 
+// ---- integrations (see paw-server api/integrations.py) ----
+export type IntegrationState = 'connected' | 'available' | 'needs_reauth' | 'unavailable'
+export interface Integration {
+  id: string
+  name: string
+  description: string
+  kind: 'built_in' | 'connector'
+  state: IntegrationState
+  reason?: string
+  account_email?: string
+  connected_at?: string
+  tools: { name: string; access: 'read' | 'write' }[]
+}
+export interface CalendarEvent {
+  id: string | null
+  title: string
+  start: string | null
+  end: string | null
+  all_day: boolean
+  location: string | null
+}
+export const listIntegrations = () => request<{ integrations: Integration[] }>('/v1/integrations')
+export const calendarEvents = (days = 7) =>
+  request<{ account_email: string; events: CalendarEvent[] }>(`/v1/integrations/google-calendar/events?days=${days}&limit=10`)
+export const disconnectCalendar = () => request<void>('/v1/integrations/google-calendar', { method: 'DELETE' })
+/** Full-page navigation: Google needs a real redirect. */
+export const connectCalendarUrl = (returnTo = '/#/integrations') =>
+  `${API_BASE_URL}/v1/integrations/google-calendar/connect?return_to=${encodeURIComponent(returnTo)}`
+
 // ---- readiness (public) ----
 export interface Readiness {
   status: 'ready'

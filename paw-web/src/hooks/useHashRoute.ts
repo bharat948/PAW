@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
-export type Route = 'documents' | 'search' | 'ask' | 'status'
-const ROUTES: Route[] = ['documents', 'search', 'ask', 'status']
+export type Route = 'documents' | 'search' | 'ask' | 'integrations' | 'status'
+const ROUTES: Route[] = ['documents', 'search', 'ask', 'integrations', 'status']
 
 const parse = (): Route => {
   const r = window.location.hash.replace(/^#\/?/, '') as Route

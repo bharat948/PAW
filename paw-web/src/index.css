@@ -259,3 +259,11 @@ details.opts summary::-webkit-details-marker { display: none; }
 .prompts { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: 1rem; }
 .prompts button { font-weight: 500; border-radius: 999px; }
 @media (max-width: 62rem) { .chat-layout.with-source { grid-template-columns: minmax(0, 1fr); } }
+
+/* integrations */
+.integration-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); margin-top: 1rem; }
+.integration header { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.integration h2 { margin: 0; font-size: 1.1rem; }
+.integration .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+.tool-list, .event-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid; gap: .4rem; }
+.event-list li { display: grid; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }

@@ -407,3 +407,15 @@ def test_list_events_error_mapping(status, code):
             "t", time_min=now, time_max=now, limit=1
         )
     assert e.value.code == code
+
+
+def test_errors_land_on_the_integrations_page_with_the_error_in_the_query(env, cal):
+    c = make(env, cal)
+    r = c.get(
+        "/v1/integrations/google-calendar/callback",
+        params={"error": "access_denied"},
+        follow_redirects=False,
+    )
+    assert (
+        r.headers["location"] == "http://localhost:5173/?integration_error=cancelled#/integrations"
+    )

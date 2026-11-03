@@ -33,10 +33,15 @@ def _redirect_uri(request: Request) -> str:
     return f"{base}/v1/integrations/google-calendar/callback"
 
 
-def _back(request: Request, path: str = "/", error: str | None = None) -> RedirectResponse:
+def _back(
+    request: Request, path: str = "/#/integrations", error: str | None = None
+) -> RedirectResponse:
+    """Back to the web app. The error goes before any #fragment so the page can read it from the query."""
     web = request.app.state.settings.web_url.rstrip("/")
+    target = auth.safe_return_to(path)
+    base, sep, frag = target.partition("#")
     q = f"?{urlencode({'integration_error': error})}" if error else ""
-    return RedirectResponse(f"{web}{auth.safe_return_to(path)}{q}", 302)
+    return RedirectResponse(f"{web}{base}{q}{sep}{frag}", 302)
 
 
 def _session(request: Request) -> Any:
