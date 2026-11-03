@@ -276,3 +276,11 @@ details.opts summary::-webkit-details-marker { display: none; }
 .empty-hint { display: flex; gap: .6rem; align-items: center; }
 .agent-status { margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* profile */
+.profile-form { display: grid; gap: .6rem; margin: 1rem 0; }
+.profile-form fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); display: grid; gap: .35rem; padding: .75rem; }
+.check { display: flex; gap: .5rem; align-items: center; }
+.grid-2 { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.version-list { list-style: none; padding: 0; display: grid; gap: .6rem; }
+.version-list li { display: grid; gap: .35rem; }

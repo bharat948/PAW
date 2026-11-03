@@ -237,6 +237,58 @@ export async function streamRunEvents(
   return last
 }
 
+// ---- Admin Hermes identity (see paw-server api/profile.py) ----
+export interface ProfileSpec {
+  persona: {
+    title: string
+    summary: string
+    expertise: string[]
+    communication: { style: 'concise' | 'balanced' | 'detailed'; uncertainty: 'explicit' | 'implicit' }
+  }
+  ethos: string[]
+  runtime: { harness: 'hermes'; model: string; max_iterations: number; max_run_seconds: number }
+  tools: { grants: string[] }
+  budgets: { per_run_usd: number; daily_usd: number }
+}
+export interface ProfileVersion {
+  id: string
+  version: number
+  status: 'draft' | 'active' | 'retired'
+  spec: ProfileSpec
+  compiled_hash: string | null
+  created_by: string
+  created_at: string
+  activated_at: string | null
+}
+export interface ProfileView {
+  actor_id: string
+  active: ProfileVersion | null
+  versions: ProfileVersion[]
+  known_tools: string[]
+}
+export interface DraftResult {
+  id: string
+  version: number
+  status: string
+  changes: string[]
+  requires_confirmation: boolean
+}
+export interface ActivateResult {
+  version: number
+  compiled_hash: string
+  changes: string[]
+  restart_required: boolean
+}
+const json = (body: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+})
+export const getProfile = () => request<ProfileView>('/v1/agent/profile')
+export const createProfileDraft = (spec: ProfileSpec) => request<DraftResult>('/v1/agent/profile/versions', json({ spec }))
+export const activateProfileVersion = (id: string, confirm: boolean) =>
+  request<ActivateResult>(`/v1/agent/profile/versions/${id}/activate`, json({ confirm }))
+
 // ---- readiness (public) ----
 export interface Readiness {
   status: 'ready'

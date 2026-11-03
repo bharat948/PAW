@@ -1,5 +1,6 @@
 import { AuthProvider, useAuth } from './auth'
 import { AgentPage } from './components/AgentPage'
+import { ProfilePage } from './components/ProfilePage'
 import { AskPage } from './components/AskPage'
 import { DocumentsPage } from './components/DocumentsPage'
 import { IntegrationsPage } from './components/IntegrationsPage'
@@ -19,6 +20,7 @@ function Routes() {
   else if (route === 'search') page = <SearchPage />
   else if (route === 'ask') page = <AskPage />
   else if (route === 'agent') page = <AgentPage />
+  else if (route === 'profile') page = <ProfilePage />
   else if (route === 'integrations') page = <IntegrationsPage />
   else page = <DocumentsPage />
   return <Shell route={route}>{page}</Shell>
