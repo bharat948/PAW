@@ -115,3 +115,20 @@ Costs a few cents of OpenAI usage per run. Never run on untrusted pull requests.
 - Resuming with `after_seq` at or past the terminal event must yield nothing. The first version of the adapter fabricated a second terminal event from the run status in that case (found by this test, fixed, unit-tested).
 - A gateway tool call arrives as `mcp__paw__paw_echo` and normalises to `paw_echo` with `native: false`; no `unknown` events were produced in any real run.
 - `stop` during a long reply ends as `run.cancelled` and status `cancelled`.
+
+## 6. 002D spike: attestation through plugin hooks (2026-11-03, real image)
+
+A plugin registered for `pre_api_request` receives, on **every model call**: `model`, `provider`, `session_id` and `task_id`
+(both equal the Hermes run id, so a report can be tied to the PAW run), the system prompt, and `request.body` with the exact
+`tools` array sent to the model. Verified against `paw-hermes:s0` with a debug hook (`PAW_ATTEST_FILE`).
+
+| Finding | Consequence |
+|---|---|
+| By default Hermes **defers MCP tools** behind three bridge tools (`hermes_tool_search`, `tool_describe`, `tool_call`); the model call lists only those, so the request does not show the MCP tool list | `tools.tool_search.enabled=false` (entrypoint now sets it at every start). The request then lists exactly `mcp__paw__<tool>` for each tool in `tools.include`, and **nothing else**; the run used 4,230 input tokens instead of 4,793 and one fewer model round trip |
+| Native (core) tools never defer, so an enabled native toolset would appear in that array | attestation check: tool names sent to the model == the profile's granted tools (prefixed). Any extra name means lockdown failed |
+| Run `instructions` are in the **system prompt** (a marker string from the run's `instructions` was found there), not in `request.body.instructions` | persona delivery is evidenced by the prompt; the gateway does not need to hash it |
+| `model` is the configured model (`gpt-4o-mini`), `provider` `openai-api` | the served model comes from `post_api_request` (response model); to verify in the reporter PR |
+| The key is `tools.tool_search.enabled`; `tool_search.enabled` is "not a recognized config key" but is saved anyway and silently ignored | use the full path |
+| Hook errors are swallowed by Hermes | the gateway must treat a missing report as "not attested" (fail closed), never as fine |
+
+The fallback (a canary run at worker start) is not needed.

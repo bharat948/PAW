@@ -17,6 +17,7 @@ services:
       PAW_HERMES_LOCKDOWN: ${PAW_HERMES_LOCKDOWN:-1}
       PAW_HERMES_GUARD: ${PAW_HERMES_GUARD:-1}
       PAW_GUARD_MODE: ${PAW_GUARD_MODE:-block}
+      PAW_ATTEST_FILE: ${PAW_ATTEST_FILE:-}
     ports: ["127.0.0.1:8642:8642"]
     restart: "no"
 

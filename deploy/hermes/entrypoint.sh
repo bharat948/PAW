@@ -62,6 +62,9 @@ fi
 if [ "${PAW_HERMES_LOCKDOWN:-1}" = "1" ]; then
   hermes config set memory.memory_enabled false
   hermes config set memory.user_profile_enabled false
+  # List the MCP tools directly instead of behind Hermes's tool_search/tool_describe/tool_call bridge: the model call
+  # then carries the exact tool list (what the attestation hook checks, 002D) and needs fewer model round trips.
+  hermes config set tools.tool_search.enabled false
   names=$(hermes tools list --platform api_server 2>&1 | grep "✓ enabled" | awk '{print $3}' | tr '\n' ' ')
   # shellcheck disable=SC2086
   [ -z "$names" ] || hermes tools disable --platform api_server $names
