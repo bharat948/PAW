@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from './App'
@@ -202,4 +202,60 @@ it('New conversation forgets the current one', async () => {
   await userEvent.click(screen.getByRole('button', { name: /new conversation/i }))
   expect(screen.queryByText('old')).not.toBeInTheDocument()
   expect(window.localStorage.getItem('paw.agent.session')).toBeNull()
+})
+
+const withRun = (events: ReturnType<typeof ev>[]): Handler[] => [
+  (u, i) => (u.endsWith('/v1/agent-sessions') && i?.method === 'POST' ? Response.json({ id: 'sess-1' }, { status: 201 }) : undefined),
+  (u, i) => (u.endsWith('/runs') && i?.method === 'POST' ? Response.json(run(), { status: 202 }) : undefined),
+  (u) => (u.includes('/events') ? sse(events) : undefined),
+  (u) => (u.endsWith('/v1/agent-runs/run-1') ? Response.json(run({ state: 'SUCCEEDED', output: 'Done.' })) : undefined),
+  base,
+]
+async function sendOne(text: string) {
+  render(<App />)
+  await userEvent.type(await screen.findByLabelText(/message admin hermès/i), text)
+  await userEvent.click(screen.getByRole('button', { name: /send/i }))
+}
+
+it('shows what the gateway decided for each tool call, with plain reasons', async () => {
+  api(withRun([
+    ev(1, 'tool.decision', { tool: 'docs_search', decision: 'allowed', reason: 'OK' }),
+    ev(2, 'tool.decision', { tool: 'calendar_list_events', decision: 'denied', reason: 'NOT_CONNECTED' }),
+    ev(3, 'tool.decision', { tool: 'terminal', decision: 'denied', reason: 'NATIVE_TOOL_BLOCKED' }),
+    ev(4, 'tool.decision', { tool: 'run_shell_command', decision: 'denied', reason: 'UNKNOWN_TOOL' }),
+    ev(5, 'run.completed'),
+  ]))
+  await sendOne('what is on my calendar?')
+  const list = await screen.findByRole('list', { name: /tool activity/i })
+  expect(list).toHaveTextContent('docs_search allowed')
+  expect(list).toHaveTextContent('calendar_list_events denied: not connected')
+  expect(list).toHaveTextContent('terminal blocked: not a PAW tool')
+  expect(list).toHaveTextContent('run_shell_command denied: no such tool')
+  expect(within(list).getAllByRole('listitem')[1]).toHaveClass('tool-denied')
+  expect(within(list).getAllByRole('listitem')[0]).not.toHaveClass('tool-denied')
+})
+
+it('prefers the gateway decisions over the model-side tool events (no double counting)', async () => {
+  api(withRun([
+    ev(1, 'tool.started', { tool: 'docs_search' }),
+    ev(2, 'tool.decision', { tool: 'docs_search', decision: 'allowed', reason: 'OK' }),
+    ev(3, 'tool.completed', { tool: 'docs_search', error: false }),
+    ev(4, 'run.completed'),
+  ]))
+  await sendOne('search')
+  const list = await screen.findByRole('list', { name: /tool activity/i })
+  expect(within(list).getAllByRole('listitem')).toHaveLength(1)
+  expect(list).toHaveTextContent('docs_search allowed')
+})
+
+it('names an unknown reason code instead of hiding it', async () => {
+  api(withRun([ev(1, 'tool.decision', { tool: 'x_tool', decision: 'denied', reason: 'SOMETHING_NEW' }), ev(2, 'run.completed')]))
+  await sendOne('go')
+  expect(await screen.findByRole('list', { name: /tool activity/i })).toHaveTextContent('x_tool denied: SOMETHING_NEW')
+})
+
+it('tells the owner to restart Hermès when its container does not match the profile', async () => {
+  api([(u) => (u.includes('/v1/runtime/health') ? Response.json({ configured: true, ready: false, missing: ['config_mismatch'], config: 'mismatch' }) : undefined), base])
+  render(<App />)
+  expect(await screen.findByText(/does not match its profile/i)).toBeInTheDocument()
 })

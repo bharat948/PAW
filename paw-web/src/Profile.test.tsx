@@ -18,7 +18,8 @@ const version = (n: number, status: string, s = spec()) => ({
   id: `v${n}`, version: n, status, spec: s, compiled_hash: `h${n}`, created_by: 'owner', created_at: '2026-11-03T10:00:00Z',
   activated_at: status === 'draft' ? null : '2026-11-03T11:00:00Z',
 })
-const view = (versions = [version(1, 'active')]) => ({
+const view = (versions = [version(1, 'active')], restart = false) => ({
+  runtime_config: restart ? 'mismatch' : 'matches', restart_required: restart,
   actor_id: 'admin-hermes', active: versions.find((v) => v.status === 'active') ?? null, versions,
   known_tools: ['calendar_list_events', 'docs_get_source', 'docs_search', 'paw_run_status', 'paw_system_status'],
 })
@@ -157,4 +158,17 @@ it('diffSpecs ignores tool order and reports only real differences', () => {
   expect(diffSpecs(a, spec({ tools: { grants: ['docs_search', 'calendar_list_events'] } }))).toEqual([])
   expect(diffSpecs(a, spec({ ethos: ['A', 'B'] }))).toEqual([{ field: 'Rules', before: 'Be honest.', after: 'A\nB' }])
   expect(diffSpecs(a, spec({ tools: { grants: [] } }))).toEqual([{ field: 'Tools', before: 'calendar_list_events, docs_search', after: '—' }])
+})
+
+it('keeps telling the owner to restart Hermès while its container runs an older configuration', async () => {
+  api([getProfile(view([version(1, 'active')], true)), base])
+  render(<App />)
+  expect(await screen.findByText(/older tool list or model/i)).toBeInTheDocument()
+})
+
+it('shows no restart warning when the container matches', async () => {
+  api([getProfile(), base])
+  render(<App />)
+  await screen.findByLabelText('Title')
+  expect(screen.queryByText(/older tool list or model/i)).not.toBeInTheDocument()
 })

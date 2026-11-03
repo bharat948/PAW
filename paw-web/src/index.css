@@ -284,3 +284,4 @@ details.opts summary::-webkit-details-marker { display: none; }
 .grid-2 { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
 .version-list { list-style: none; padding: 0; display: grid; gap: .6rem; }
 .version-list li { display: grid; gap: .35rem; }
+.tool-activity .tool-denied { color: var(--bad); }

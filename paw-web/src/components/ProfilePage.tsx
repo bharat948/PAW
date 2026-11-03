@@ -112,6 +112,12 @@ export function ProfilePage() {
       <p className="muted">
         Who Admin Hermès is and what it may do. Changes create a new version; earlier versions are kept, and each run records the version it used.
       </p>
+      {view.restart_required && (
+        <p role="alert" className="error-text">
+          The Hermès container is running an older tool list or model than the active profile. Restart it (./dev.sh) to apply it;
+          until then its tool calls are refused.
+        </p>
+      )}
       {notice && <p role="status" className="ok-text">{notice}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
       {needStepUp && (

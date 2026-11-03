@@ -40,10 +40,16 @@ interface Tool {
   done: boolean
   error: boolean
 }
+interface Decision {
+  tool: string
+  decision: 'allowed' | 'denied' | 'error'
+  reason: string
+}
 interface Turn {
   run: AgentRun
   live: string // text streamed so far; the stored output replaces it once the run is finished
   tools: Tool[]
+  decisions: Decision[] // what the PAW gateway decided for each tool call: the evidence, not the model's words
   lost: boolean // the event stream could not be re-attached
 }
 
@@ -57,6 +63,25 @@ const STATE_LABEL: Record<RunState, string> = {
   CANCELLED: 'Stopped.',
   INTERRUPTED: 'Interrupted. What was written is kept; send a new message to continue.',
 }
+const REASON_TEXT: Record<string, string> = {
+  OK: 'allowed',
+  NOT_CONNECTED: 'denied: not connected',
+  CONNECTION_REVOKED: 'denied: needs reconnecting',
+  NOT_GRANTED: 'denied: not allowed for this agent',
+  UNKNOWN_TOOL: 'denied: no such tool',
+  TOOL_DISABLED: 'denied: switched off',
+  NATIVE_TOOL_BLOCKED: 'blocked: not a PAW tool',
+  INVALID_ARGUMENTS: 'denied: invalid request',
+  RATE_LIMITED: 'denied: too many calls in this run',
+  BUDGET_EXCEEDED: 'denied: budget used up',
+  APPROVAL_REQUIRED: 'denied: needs your approval',
+  NO_ACTIVE_RUN: 'denied: no active run',
+  ATTESTATION_MISSING: 'denied: runtime not verified',
+  ATTESTATION_MISMATCH: 'denied: runtime does not match its profile',
+  TOOL_ERROR: 'failed',
+  HANDLER_ERROR: 'failed',
+}
+export const decisionText = (d: Decision) => REASON_TEXT[d.reason] ?? (d.decision === 'allowed' ? 'allowed' : `denied: ${d.reason}`)
 const isDone = (s: RunState) => RUN_TERMINAL.includes(s)
 const uid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `r${Date.now()}${Math.random().toString(16).slice(2)}`)
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -98,6 +123,14 @@ export function AgentPage() {
           if (e.type === 'run.state') return { ...t, run: { ...t.run, state: e.payload.state as RunState } }
           if (e.type === 'tool.started')
             return { ...t, tools: [...t.tools, { name: String(e.payload.tool), done: false, error: false }] }
+          if (e.type === 'tool.decision')
+            return {
+              ...t,
+              decisions: [
+                ...t.decisions,
+                { tool: String(e.payload.tool), decision: e.payload.decision as Decision['decision'], reason: String(e.payload.reason ?? '') },
+              ],
+            }
           if (e.type === 'tool.completed') {
             const idx = t.tools.findIndex((x) => x.name === e.payload.tool && !x.done)
             const tools = t.tools.map((x, i) => (i === idx ? { ...x, done: true, error: e.payload.error === true } : x))
@@ -127,7 +160,7 @@ export function AgentPage() {
       const { runs } = await listAgentRuns(id)
       if (!alive.current) return
       setSessionId(id)
-      setTurns(runs.map((run) => ({ run, live: '', tools: [], lost: false })))
+      setTurns(runs.map((run) => ({ run, live: '', tools: [], decisions: [], lost: false })))
       const active = runs.find((r) => !isDone(r.state))
       if (active) void attach(active.id) // navigated away mid-run: pick the run back up
     },
@@ -180,7 +213,7 @@ export function AgentPage() {
       }
       const run = await submitAgentRun(id, uid(), text)
       setInput('')
-      setTurns((ts) => [...ts, { run, live: '', tools: [], lost: false }])
+      setTurns((ts) => [...ts, { run, live: '', tools: [], decisions: [], lost: false }])
       void attach(run.id)
     } catch (e) {
       setError(sendError(e))
@@ -236,7 +269,9 @@ export function AgentPage() {
       )}
       {notReady && (
         <p role="alert" className="error-text">
-          Admin Hermès is not ready{health.missing.length ? ` (${health.missing.join(', ')})` : ''}. Is the container running?
+          {health.missing.some((m) => m.startsWith('config_'))
+            ? "Admin Hermès's container does not match its profile. Restart it (./dev.sh) to apply the profile."
+            : `Admin Hermès is not ready${health.missing.length ? ` (${health.missing.join(', ')})` : ''}. Is the container running?`}
         </p>
       )}
 
@@ -253,14 +288,24 @@ export function AgentPage() {
             <div key={t.run.id} className="agent-turn">
               <div className="msg-user">{t.run.message}</div>
               <div className="msg-ai">
-                {t.tools.length > 0 && (
+                {t.decisions.length > 0 ? (
                   <ul className="tool-activity" aria-label="Tool activity">
-                    {t.tools.map((x, i) => (
-                      <li key={i}>
-                        <code>{x.name}</code> {x.done ? (x.error ? 'failed' : 'done') : 'running…'}
+                    {t.decisions.map((d, i) => (
+                      <li key={i} className={d.decision === 'allowed' ? '' : 'tool-denied'}>
+                        <code>{d.tool}</code> {decisionText(d)}
                       </li>
                     ))}
                   </ul>
+                ) : (
+                  t.tools.length > 0 && (
+                    <ul className="tool-activity" aria-label="Tool activity">
+                      {t.tools.map((x, i) => (
+                        <li key={i}>
+                          <code>{x.name}</code> {x.done ? (x.error ? 'failed' : 'done') : 'running…'}
+                        </li>
+                      ))}
+                    </ul>
+                  )
                 )}
                 {text && <div className="bubble card">{text}</div>}
                 <p className="muted small agent-status" role="status">

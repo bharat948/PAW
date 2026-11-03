@@ -261,6 +261,8 @@ export interface ProfileVersion {
   activated_at: string | null
 }
 export interface ProfileView {
+  runtime_config: 'matches' | 'mismatch' | 'unknown'
+  restart_required: boolean
   actor_id: string
   active: ProfileVersion | null
   versions: ProfileVersion[]
