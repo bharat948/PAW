@@ -1,0 +1,11 @@
+{
+  "max_iterations": 25,
+  "mcp_include": [
+    "calendar_list_events",
+    "docs_get_source",
+    "docs_search",
+    "paw_run_status",
+    "paw_system_status"
+  ],
+  "model": "gpt-4o-mini"
+}

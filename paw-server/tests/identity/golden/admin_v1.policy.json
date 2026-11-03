@@ -1,0 +1,17 @@
+{
+  "actor_id": "admin-hermes",
+  "budgets": {
+    "daily_usd": 3.0,
+    "per_run_usd": 0.5
+  },
+  "grants": [
+    "calendar_list_events",
+    "docs_get_source",
+    "docs_search",
+    "paw_run_status",
+    "paw_system_status"
+  ],
+  "max_run_seconds": 600,
+  "profile_version": 1,
+  "resource_scopes": {}
+}
