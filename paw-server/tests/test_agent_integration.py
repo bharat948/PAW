@@ -559,3 +559,62 @@ def test_a_live_stream_delivers_events_as_the_worker_commits_them(h):
     assert [e["seq"] for e in got] == list(range(1, len(got) + 1))
     assert [e["type"] for e in got if e["type"] == "message.delta"] == ["message.delta"] * 3
     assert got[0]["type"] == "run.queued" and got[-1]["type"] == "run.completed"
+
+
+# ---- stop deadline (002A step 7) ---------------------------------------------------------------------------------
+
+
+def test_a_stop_hermes_never_confirms_ends_interrupted_after_the_deadline(env):
+    h = Harness(env, agent_stop_deadline_s=1)
+    run = _running(h)
+    with h.pool.connection() as conn:
+        lc.append_event(conn, UUID(run["id"]), "message.delta", {"text": "so far"}, "hermes-1:0")
+    h.c.post(f"/v1/agent-runs/{run['id']}/cancel", headers=AUTH)
+    assert h.worker.reap() == 0  # within the deadline: still waiting for Hermes
+    time.sleep(
+        1.2
+    )  # events are append-only, so the deadline is crossed by waiting, not by back-dating
+    assert h.worker.reap() == 1
+    r = h.run(run["id"])
+    assert (r["state"], r["error_code"], r["output"]) == (
+        "INTERRUPTED",
+        "stop_not_confirmed",
+        "so far",
+    )
+    assert h.types(run["id"])[-1] == "run.interrupted"
+    assert sql(env, "SELECT count(*) FROM agent_run_leases") == [(0,)]
+    assert h.worker.reap() == 0
+    h.pool.close()
+
+
+def test_events_arriving_after_the_deadline_are_not_stored_after_the_terminal_event(h):
+    run = h.send(h.session())
+    rid = UUID(run["id"])
+
+    def script(hid):
+        return [delta("a"), delta("late"), completed("a late")]
+
+    def end_it(i):
+        if i == 1:  # the reaper ends the run while the stream is still delivering
+            with h.pool.connection() as conn:
+                lc.request_cancel(conn, rid)
+                lc.finish(conn, rid, "INTERRUPTED", error_code="stop_not_confirmed")
+
+    h.rt.script, h.rt.between_events = script, end_it
+    h.worker.run_once()
+    # read the table, not the stream: the stream stops at the first terminal event and would hide later rows
+    stored = [
+        t
+        for (t,) in sql(
+            h.env, "SELECT type FROM agent_run_events WHERE run_id = %s ORDER BY seq", rid
+        )
+    ]
+    assert stored[-1] == "run.interrupted" and "run.completed" not in stored
+    assert h.run(run["id"])["state"] == "INTERRUPTED"
+
+
+def test_reaper_leaves_other_states_alone(h):
+    running = _running(h)
+    queued = h.send(h.session())
+    assert h.worker.reap() == 0
+    assert h.run(queued["id"])["state"] == "QUEUED" and h.run(running["id"])["state"] == "RUNNING"

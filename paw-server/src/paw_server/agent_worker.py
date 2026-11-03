@@ -26,6 +26,18 @@ def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     log.info("agent worker started, recovered %s interrupted run(s)", worker.recover())
+
+    def reaper() -> (
+        None
+    ):  # runs beside the (blocking) run loop, so a hung stop cannot hold a run forever
+        while not stop.wait(5):
+            try:
+                if n := worker.reap():
+                    log.warning("ended %s run(s) whose stop was not confirmed in time", n)
+            except Exception:
+                log.exception("agent reaper error")
+
+    threading.Thread(target=reaper, name="agent-reaper", daemon=True).start()
     while not stop.is_set():
         try:
             handled = worker.run_once()

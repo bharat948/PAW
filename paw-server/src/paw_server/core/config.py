@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     hermes_url: str = ""
     hermes_key: str = ""
     agent_queue_limit: int = Field(default=5, ge=1, le=100)  # queued runs across all sessions
+    agent_stop_deadline_s: int = Field(
+        default=30, ge=1
+    )  # CANCELLING longer than this becomes INTERRUPTED
     agent_model: str = (
         "gpt-4o-mini"  # recorded as the requested model; Hermes does not report the served one
     )

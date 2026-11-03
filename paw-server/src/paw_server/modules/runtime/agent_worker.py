@@ -38,6 +38,11 @@ class AgentWorker:
         with self.pool.connection() as conn:
             return lc.recover_interrupted(conn)
 
+    def reap(self) -> int:
+        """End runs whose stop was never confirmed. Safe to call from another thread while a run is processed."""
+        with self.pool.connection() as conn:
+            return lc.expire_cancelling(conn, self.settings.agent_stop_deadline_s)
+
     def run_once(self) -> bool:
         """Claim and fully process one run. False when there was nothing to do."""
         with self.pool.connection() as conn:
@@ -105,6 +110,9 @@ class AgentWorker:
         """Persist one event. True when it was the terminal one (the run is then finished)."""
         if not ev.terminal:
             with self.pool.connection() as conn:
+                # ended elsewhere (stop deadline): nothing may follow a terminal event
+                if lc.is_terminal(conn, run_id):
+                    return True
                 lc.append_event(conn, run_id, ev.type, ev.payload, ev.source_event_id)
                 lc.heartbeat(conn, run_id)
             return False

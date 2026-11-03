@@ -354,6 +354,36 @@ def partial_output(conn: Conn, run_id: UUID) -> str:
     return str(row["t"]) if row else ""
 
 
+def is_terminal(conn: Conn, run_id: UUID) -> bool:
+    row = conn.execute("SELECT state FROM agent_runs WHERE id = %s", (run_id,)).fetchone()
+    conn.commit()
+    return row is None or row["state"] in TERMINAL
+
+
+def expire_cancelling(conn: Conn, deadline_s: int) -> int:
+    """A stop that Hermes has not confirmed within the deadline ends the run as INTERRUPTED (spec 9: "stop not
+    confirmed in time"). The output streamed so far is kept. Returns how many runs were ended."""
+    rows = conn.execute(
+        "SELECT r.id FROM agent_runs r WHERE r.state = 'CANCELLING' AND (SELECT max(occurred_at) FROM agent_run_events e "
+        "WHERE e.run_id = r.id AND e.type = 'run.state' AND e.payload->>'state' = 'CANCELLING') "
+        "< now() - make_interval(secs => %s)",
+        (deadline_s,),
+    ).fetchall()
+    conn.commit()
+    n = 0
+    for r in rows:
+        ended = finish(
+            conn,
+            r["id"],
+            "INTERRUPTED",
+            payload={"reason": "stop_not_confirmed"},
+            error_code="stop_not_confirmed",
+            output=partial_output(conn, r["id"]),
+        )
+        n += ended is not None
+    return n
+
+
 def recover_interrupted(conn: Conn) -> int:
     """Run at worker start. With one worker, any run still DISPATCHING/RUNNING/CANCELLING belonged to a worker that
     died: it becomes INTERRUPTED with whatever output was streamed. Never replayed, never reported as success."""
