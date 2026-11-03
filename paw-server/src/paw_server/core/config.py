@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     )
     # key for connector secrets at rest (Fernet, urlsafe base64 of 32 bytes); generate with `make connector-key`
     connector_key: str = ""
+    # Admin Hermes runtime (PAW-002). Empty url or key = the agent endpoints answer 503 agent_unavailable.
+    hermes_url: str = ""
+    hermes_key: str = ""
+    agent_queue_limit: int = Field(default=5, ge=1, le=100)  # queued runs across all sessions
+    agent_model: str = (
+        "gpt-4o-mini"  # recorded as the requested model; Hermes does not report the served one
+    )
     web_url: str = "http://localhost:5173"  # where the browser lands after Google sign-in
     session_ttl_s: int = Field(default=86400, ge=60)  # absolute session lifetime
     session_idle_s: int = Field(default=14400, ge=60)  # sign out after this much inactivity

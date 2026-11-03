@@ -116,7 +116,7 @@ class Env:
         # never read the developer's .env: tests must behave the same on every machine
         return Settings(_env_file=None, **{**base, **self.overrides, **kw})  # type: ignore[arg-type]
 
-    def client(self, idp=None, calendar=None, **kw) -> TestClient:
+    def client(self, idp=None, calendar=None, runtime=None, **kw) -> TestClient:
         c = TestClient(
             create_app(
                 self.settings(**kw),
@@ -125,6 +125,7 @@ class Env:
                 llm=self.llm,
                 idp=idp,
                 calendar=calendar,
+                runtime=runtime,
             ),
             raise_server_exceptions=False,
         )

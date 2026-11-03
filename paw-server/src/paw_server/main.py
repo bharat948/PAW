@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from paw_server import __version__
-from paw_server.api import auth, chat, dev, documents, health, integrations, retrieval
+from paw_server.api import agent, auth, chat, dev, documents, health, integrations, retrieval
 from paw_server.core.config import Settings, get_settings
 from paw_server.core.errors import install_error_handlers
 from paw_server.core.logging import configure_logging
@@ -17,6 +17,8 @@ from paw_server.modules.chat.llm import LLM, build_llm
 from paw_server.modules.connectors.google_calendar import CalendarProvider, GoogleCalendarProvider
 from paw_server.modules.ingestion.embedding import Embedder, build_embedder
 from paw_server.modules.ingestion.storage import ObjectStore, build_store
+from paw_server.modules.runtime.hermes_adapter import HermesAdapter
+from paw_server.modules.runtime.protocol import AgentRuntime
 
 
 def create_app(
@@ -26,6 +28,7 @@ def create_app(
     llm: LLM | None = None,
     idp: IdentityProvider | None = None,
     calendar: CalendarProvider | None = None,
+    runtime: AgentRuntime | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -55,6 +58,9 @@ def create_app(
             settings.google_client_id, settings.google_client_secret, identity=idp
         )
     app.state.calendar = calendar
+    if runtime is None and settings.hermes_url and settings.hermes_key:
+        runtime = HermesAdapter(settings.hermes_url, settings.hermes_key)
+    app.state.runtime = runtime
     app.state.auth_limiter = SlidingWindowLimiter(30)
     app.state.chat_limiter = SlidingWindowLimiter(settings.chat_rate_limit_per_min)
     app.state.search_limiter = SlidingWindowLimiter(settings.search_rate_limit_per_min)
@@ -72,6 +78,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(integrations.router)
+    app.include_router(agent.router)
     app.include_router(documents.router)
     app.include_router(retrieval.router)
     app.include_router(chat.router)
