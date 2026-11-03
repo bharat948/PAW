@@ -34,12 +34,20 @@ class FakeHermes:
     def __init__(self, features: dict[str, bool] | None = None) -> None:
         self.runs: dict[str, _Run] = {}
         self.idem: dict[str, str] = {}
-        self.features = features or {
+        self.features: dict[str, Any] = features or {
             "run_submission": True,
             "run_status": True,
             "run_events_sse": True,
             "run_stop": True,
+            "runs_idempotency": {"supported": True, "durable": True, "retention_seconds": 86400},
         }
+        # fault injection for adapter tests
+        self.cut_stream_after: int | None = None  # next event stream ends after this many frames
+        self.fail_create: int = 0  # next N create calls answer 503 without starting a run
+        self.lose_create_response: int = (
+            0  # next N create calls start the run, then drop the connection
+        )
+        self.creates: int = 0
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -65,6 +73,8 @@ class FakeHermes:
                 self.wfile.write(data)
 
             def do_GET(self) -> None:  # noqa: N802
+                if self.path == "/health":  # unauthenticated, like the real one
+                    return self._json(200, {"status": "ok"})
                 if not self._auth():
                     return
                 p = self.path
@@ -90,7 +100,7 @@ class FakeHermes:
                                 "run_id": run.id,
                                 "status": run.status,
                                 "output": "".join(
-                                    e[1].get("text", "")
+                                    e[1].get("delta", "")
                                     for e in run.events
                                     if e[0] == "message.delta"
                                 ),
@@ -126,6 +136,9 @@ class FakeHermes:
                                 return
                         name, payload = run.events[i]
                     i += 1
+                    if fake.cut_stream_after is not None and i - 1 >= fake.cut_stream_after:
+                        fake.cut_stream_after = None
+                        return  # simulates a dropped connection mid-run
                     frame = {"event": name, "run_id": run.id, "seq": i - 1, **payload}
                     self.wfile.write(
                         f"data: {json.dumps(frame)}\n\n".encode()
@@ -140,6 +153,10 @@ class FakeHermes:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
                 if self.path == "/v1/runs":
+                    fake.creates += 1
+                    if fake.fail_create > 0:
+                        fake.fail_create -= 1
+                        return self._json(503, {"error": {"message": "overloaded"}})
                     if not isinstance(body.get("input"), str):
                         return self._json(400, {"error": {"message": "input required"}})
                     key = self.headers.get("Idempotency-Key")
@@ -155,6 +172,10 @@ class FakeHermes:
                     if key:
                         fake.idem[key] = rid
                     threading.Thread(target=fake._execute, args=(run,), daemon=True).start()
+                    if fake.lose_create_response > 0:
+                        fake.lose_create_response -= 1
+                        self.connection.close()  # run started, answer never arrives
+                        return
                     return self._json(202, {"run_id": rid, "status": "started", "replayed": False})
                 parts = self.path.strip("/").split("/")
                 if len(parts) == 4 and parts[3] == "stop" and parts[2] in fake.runs:
@@ -180,7 +201,7 @@ class FakeHermes:
             run.status = "cancelled"
             return
         for word in ("echo:", " ", text[:40]):
-            run.emit("message.delta", {"text": word})
+            run.emit("message.delta", {"delta": word})
         run.emit(
             "run.completed", {"completed": True, "usage": {"input_tokens": 10, "output_tokens": 5}}
         )
