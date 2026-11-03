@@ -65,3 +65,18 @@ the compose file derives `PAW_API_PUBLIC_URL` and `PAW_WEB_URL` from it and forc
 - `return_to` only accepts same-site relative paths (open-redirect tests included).
 - Auth log lines carry reason codes only: no tokens, cookies, codes or email addresses.
 - Not covered yet: multi-device session list, account lockout beyond the 30/min rate limit, Google account removal webhooks.
+
+## Google Calendar (read-only connector)
+
+1. In Google Cloud, enable the **Google Calendar API** for the same project, and add the scope
+   `.../auth/calendar.readonly` to the consent screen.
+2. Add a second **Authorized redirect URI** to the same Web client:
+   `http://localhost:8000/v1/integrations/google-calendar/callback`
+   (`https://<domain>/api/v1/integrations/google-calendar/callback` at home).
+3. Generate a key that encrypts the stored Google tokens and put it in `paw-server/.env`
+   (keep a copy outside the repo; losing it only means you reconnect):
+   `PAW_CONNECTOR_KEY=<python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">`
+4. Restart `./dev.sh`, sign in, then connect from the Integrations page.
+
+Note: while the OAuth consent screen is in **Testing**, Google expires refresh tokens after 7 days, so the
+connection will show "needs reconnect" weekly. Publishing the app (even unverified, single user) removes that.

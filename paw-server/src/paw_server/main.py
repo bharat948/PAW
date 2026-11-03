@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from paw_server import __version__
-from paw_server.api import auth, chat, dev, documents, health, retrieval
+from paw_server.api import auth, chat, dev, documents, health, integrations, retrieval
 from paw_server.core.config import Settings, get_settings
 from paw_server.core.errors import install_error_handlers
 from paw_server.core.logging import configure_logging
@@ -14,6 +14,7 @@ from paw_server.core.ratelimit import SlidingWindowLimiter
 from paw_server.db.pool import create_pool
 from paw_server.modules.auth.oidc import GoogleIdentityProvider, IdentityProvider
 from paw_server.modules.chat.llm import LLM, build_llm
+from paw_server.modules.connectors.google_calendar import CalendarProvider, GoogleCalendarProvider
 from paw_server.modules.ingestion.embedding import Embedder, build_embedder
 from paw_server.modules.ingestion.storage import ObjectStore, build_store
 
@@ -24,6 +25,7 @@ def create_app(
     embedder: Embedder | None = None,
     llm: LLM | None = None,
     idp: IdentityProvider | None = None,
+    calendar: CalendarProvider | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -43,6 +45,16 @@ def create_app(
     if idp is None and settings.auth_mode in ("google", "both"):
         idp = GoogleIdentityProvider(settings.google_client_id, settings.google_client_secret)
     app.state.idp = idp
+    if (
+        calendar is None
+        and settings.auth_mode in ("google", "both")
+        and settings.connector_key
+        and isinstance(idp, GoogleIdentityProvider)
+    ):
+        calendar = GoogleCalendarProvider(
+            settings.google_client_id, settings.google_client_secret, identity=idp
+        )
+    app.state.calendar = calendar
     app.state.auth_limiter = SlidingWindowLimiter(30)
     app.state.chat_limiter = SlidingWindowLimiter(settings.chat_rate_limit_per_min)
     app.state.search_limiter = SlidingWindowLimiter(settings.search_rate_limit_per_min)
@@ -59,6 +71,7 @@ def create_app(
         )
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(integrations.router)
     app.include_router(documents.router)
     app.include_router(retrieval.router)
     app.include_router(chat.router)

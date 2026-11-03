@@ -3,6 +3,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
 
+from cryptography.fernet import Fernet
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -58,6 +59,8 @@ class Settings(BaseSettings):
     api_public_url: str = (
         "http://localhost:8000"  # browser-visible API origin (OAuth redirect base)
     )
+    # key for connector secrets at rest (Fernet, urlsafe base64 of 32 bytes); generate with `make connector-key`
+    connector_key: str = ""
     web_url: str = "http://localhost:5173"  # where the browser lands after Google sign-in
     session_ttl_s: int = Field(default=86400, ge=60)  # absolute session lifetime
     session_idle_s: int = Field(default=14400, ge=60)  # sign out after this much inactivity
@@ -165,6 +168,11 @@ class Settings(BaseSettings):
                 "PAW_GOOGLE_CLIENT_ID, PAW_GOOGLE_CLIENT_SECRET and PAW_ALLOWED_EMAILS are required "
                 "when PAW_AUTH_MODE is google or both"
             )
+        if self.connector_key:
+            try:
+                Fernet(self.connector_key.encode())
+            except (ValueError, TypeError) as exc:
+                raise ValueError("PAW_CONNECTOR_KEY must be a valid Fernet key") from exc
         if self.db_pool_min > self.db_pool_max:
             raise ValueError("PAW_DB_POOL_MIN must not exceed PAW_DB_POOL_MAX")
         if self.env in (Environment.STAGING, Environment.PRODUCTION, Environment.HOME):

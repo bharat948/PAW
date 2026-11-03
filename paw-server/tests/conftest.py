@@ -113,9 +113,10 @@ class Env:
             retry_max_s=0,
             max_attempts=3,
         )
-        return Settings(**{**base, **self.overrides, **kw})  # type: ignore[arg-type]
+        # never read the developer's .env: tests must behave the same on every machine
+        return Settings(_env_file=None, **{**base, **self.overrides, **kw})  # type: ignore[arg-type]
 
-    def client(self, idp=None, **kw) -> TestClient:
+    def client(self, idp=None, calendar=None, **kw) -> TestClient:
         c = TestClient(
             create_app(
                 self.settings(**kw),
@@ -123,6 +124,7 @@ class Env:
                 embedder=self.embedder,
                 llm=self.llm,
                 idp=idp,
+                calendar=calendar,
             ),
             raise_server_exceptions=False,
         )
