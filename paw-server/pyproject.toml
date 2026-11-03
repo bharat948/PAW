@@ -17,6 +17,7 @@ dependencies = [
   "httpx>=0.28.1",
   "pyjwt[crypto]>=2.9",
   "cryptography>=50.0.2",
+  "jsonschema>=4.26.0",
 ]
 
 [dependency-groups]
@@ -25,6 +26,7 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pytest-cov>=5",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]
