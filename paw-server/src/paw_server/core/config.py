@@ -213,6 +213,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"PAW_{name.upper()} must be an https:// origin in the home environment"
                 )
+        if self.gateway_attestation != "required":
+            raise ValueError("PAW_GATEWAY_ATTESTATION must be required in the home environment")
+        if len(self.gateway_token) < 24:
+            raise ValueError(
+                "PAW_GATEWAY_TOKEN (at least 24 characters) is required in the home environment"
+            )
         if not self.installation_id.strip():
             raise ValueError("PAW_INSTALLATION_ID is required in the home environment")
         if not (self.public_base_url or "").startswith("https://"):

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from paw_server.api.deps import CurrentActor, StepUpActor
 from paw_server.core.errors import ApiError
+from paw_server.modules.gateway import attestation
 from paw_server.modules.identity import service as svc
 from paw_server.modules.identity.spec import ActorProfileSpec
 from paw_server.modules.identity.tools import KNOWN_TOOLS
@@ -48,7 +49,16 @@ def get_profile(request: Request, actor: CurrentActor) -> dict[str, Any]:
         )  # a fresh install shows version 1 without waiting for the worker
         versions = svc.list_versions(conn, svc.ADMIN)
     out = [_version_out(v) for v in versions]
+    with request.app.state.pool.connection() as conn:
+        active = svc.get_active(conn, svc.ADMIN)
+        status = attestation.runtime_status(
+            conn,
+            request.app.state.settings.gateway_runtime,
+            active.compiled.config_fragment if active else None,
+        )
     return {
+        "runtime_config": status.state,  # matches | mismatch | unknown
+        "restart_required": status.state == "mismatch",
         "actor_id": svc.ADMIN,
         "active": next((v for v in out if v["status"] == "active"), None),
         "versions": out,

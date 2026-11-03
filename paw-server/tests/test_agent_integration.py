@@ -205,6 +205,7 @@ def test_agent_endpoints_say_unavailable_when_hermes_is_not_configured(env):
         "configured": False,
         "ready": False,
         "missing": ["not_configured"],
+        "config": "unknown",
     }
 
 
@@ -214,6 +215,7 @@ def test_runtime_health_reports_missing_capabilities(h):
         "configured": True,
         "ready": False,
         "missing": ["run_stop"],
+        "config": "unknown",
     }
     h.rt.missing = []
     assert h.c.get("/v1/runtime/health", headers=AUTH).json()["ready"] is True

@@ -17,6 +17,7 @@ from psycopg_pool import ConnectionPool
 
 from paw_server.core.config import Settings
 from paw_server.modules.connectors import store as connector_store
+from paw_server.modules.gateway import attestation as att
 from paw_server.modules.gateway.policy import Decision, PolicyInput, RunBinding, decide
 from paw_server.modules.gateway.registry import ToolRegistry, enabled_tools, validate_arguments
 from paw_server.modules.gateway.shaping import ContinuationStore, shape
@@ -88,7 +89,9 @@ class GatewayService:
         self.pool, self.registry, self.settings = pool, registry, settings
         self.continuations = continuations or ContinuationStore()
         self._connection_status = connection_status or self._db_connection_status
-        self._attestation = attestation or (lambda run_id: "ok")
+        self._attestation = (
+            attestation  # injected in tests; the default checks the runtime's own reports
+        )
 
     # ---- facts -----------------------------------------------------------------------------------------------
     def _db_connection_status(self, owner: str, provider: str) -> str | None:
@@ -99,7 +102,7 @@ class GatewayService:
     def _active_runs(self) -> list[dict[str, Any]]:
         with self.pool.connection() as conn:
             rows = conn.execute(
-                "SELECT r.id, r.session_id, r.executing_actor_id, r.profile_version, s.owner, s.workspace_id, "
+                "SELECT r.id, r.session_id, r.executing_actor_id, r.profile_version, r.hermes_run_id, s.owner, s.workspace_id, "
                 "c.policy, (SELECT count(*) FROM gateway_tool_invocations i WHERE i.run_id = r.id) AS calls "
                 "FROM agent_runs r JOIN agent_run_leases l ON l.run_id = r.id "
                 "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.name = %s "
@@ -133,8 +136,13 @@ class GatewayService:
             enabled = tool_name in enabled_tools(conn)
         if run is None or self.settings.gateway_attestation == "off":
             attestation = "ok"
-        else:
+        elif self._attestation is not None:
             attestation = self._attestation(run["id"])
+        else:
+            with self.pool.connection() as conn:
+                attestation = att.call_attestation(
+                    conn, run["hermes_run_id"], run["policy"].get("grants", [])
+                )
         decision = decide(
             PolicyInput(
                 authenticated=authenticated, active_runs=bindings, attestation=attestation, tool=spec,
@@ -191,6 +199,26 @@ class GatewayService:
             else VISIBLE_DENIAL.format(reason=final.reason)
         )
         return ToolOutcome(True, text, outcome_kind, final.reason, invocation_id)
+
+    def receive_report(self, body: Any) -> str:
+        """A report from the runtime's plugin. A blocked native tool call also becomes an audit row and a
+        `tool.decision` event, so the chat shows it (Hermes itself emits no event for a blocked call)."""
+        with self.pool.connection() as conn:
+            kind = att.record_report(conn, self.settings.gateway_runtime, body)
+            run = None
+            if kind == "blocked":
+                run = conn.execute(
+                    "SELECT id, executing_actor_id FROM agent_runs WHERE hermes_run_id = %s",
+                    (body.get("hermes_run_id"),),
+                ).fetchone()
+                conn.commit()
+        if kind == "blocked":
+            self._audit(
+                invocation_id=uuid.uuid4(), run=run, tool=str(body.get("tool_name")), spec=None, args={},
+                decision="denied", reason="NATIVE_TOOL_BLOCKED", latency_ms=0, result_bytes=0, truncated=False,
+                error=None, trace_id=uuid.uuid4().hex,
+            )  # fmt: skip
+        return kind
 
     def _audit(
         self, *, invocation_id: UUID, run: dict[str, Any] | None, tool: str, spec: Any, args: Any, decision: str,

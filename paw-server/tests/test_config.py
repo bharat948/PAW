@@ -59,6 +59,8 @@ HOME_OK = dict(
     allowed_emails="Owner@Example.org",
     api_public_url="https://paw.mydomain.dev/api",
     web_url="https://paw.mydomain.dev",
+    gateway_token="gateway-token-0123456789abcdef",
+    gateway_attestation="required",
 )
 
 
@@ -87,6 +89,9 @@ def test_home_accepts_complete_config():
         {"web_url": "http://paw.mydomain.dev"},
         {"allowed_emails": ""},
         {"google_client_secret": ""},
+        {"gateway_attestation": "off"},
+        {"gateway_token": ""},
+        {"gateway_token": "short"},
     ],
 )
 def test_home_rejects_unsafe_config(over):

@@ -11,14 +11,15 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
       HERMES_CONFIG_SET: ${HERMES_CONFIG_SET:-}
       PAW_MCP_URL: ${PAW_MCP_URL:-}
-      PAW_MCP_TOKEN: ${STUB_TOKEN:-}
+      PAW_MCP_TOKEN: ${PAW_MCP_TOKEN:-${STUB_TOKEN:-}}
       PAW_MCP_TRUST: ${PAW_MCP_TRUST:-full}
       PAW_MCP_INCLUDE: ${PAW_MCP_INCLUDE:-}
       PAW_HERMES_LOCKDOWN: ${PAW_HERMES_LOCKDOWN:-1}
       PAW_HERMES_GUARD: ${PAW_HERMES_GUARD:-1}
       PAW_GUARD_MODE: ${PAW_GUARD_MODE:-block}
-      PAW_ATTEST_FILE: ${PAW_ATTEST_FILE:-}
+      PAW_CONFIG_HASH: ${PAW_CONFIG_HASH:-}
     ports: ["127.0.0.1:8642:8642"]
+    extra_hosts: ["host.docker.internal:host-gateway"]  # dev: the PAW gateway runs on the host
     restart: "no"
 
   # S0 only: stub MCP server in the same image (same MCP SDK as the client). Real gateway is 002D.

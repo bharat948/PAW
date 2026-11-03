@@ -36,7 +36,7 @@ mkdir -p ~/.config/paw && umask 077
 Never commit this file or paste it anywhere: it holds your OpenAI key. Use a dedicated OpenAI project key with a monthly budget.
 
 ## 3. Start, check, stop
-**Shortcut:** once steps 1 and 2 are done, `./dev.sh` starts Hermès (and the stub tool server) together with the rest of PAW, and `./dev.sh stop` stops them. `HERMES=0 ./dev.sh` skips it. The manual commands below do the same thing by hand.
+**Shortcut:** once steps 1 and 2 are done, `./dev.sh` starts the PAW gateway, recreates the Hermès container from the active profile (tool list, model, turn limit) and starts the agent worker with the rest of PAW. `./dev.sh stop` stops them; `HERMES=0 ./dev.sh` skips them. Re-running `./dev.sh` is the "restart Hermès" the Profile page asks for. The commands below are the S0 spike with the stub tool server.
 
 ```
 docker compose --env-file ~/.config/paw/s0.env -f deploy/hermes/compose.s0.yaml up -d
@@ -80,3 +80,23 @@ Unlocked Hermès can run a shell inside its container and sends about 10k tokens
 | `401` on every call | wrong `API_SERVER_KEY`; the container reads it only at start |
 | Port 8642/8001 in use | another copy is running: `docker compose ... down` |
 | Answers mention it cannot see tools | the model sometimes refuses to list tools; check `/_calls` instead |
+
+## 6. Gateway end-to-end (002D)
+In dev, Hermès reaches the PAW gateway on the host (`host.docker.internal:8100`) with a bearer token kept in
+`~/.config/paw/gateway.token`. The gateway listens on `0.0.0.0` in dev so the container can reach it; the token is the access
+control, so keep it private (home uses a private Docker network with no published port). Start order matters: the gateway
+must be up before Hermès, or Hermès parks it for good.
+
+Manual check against the real stack (costs a few cents), with the gateway, the container and a scratch database wired together:
+```
+createdb paw_e2e && PAW_DATABASE_URL=.../paw_e2e uv run alembic -c alembic.ini upgrade head
+PAW_DATABASE_URL=.../paw_e2e PAW_GATEWAY_TOKEN=$(cat ~/.config/paw/gateway.token) PAW_GATEWAY_ATTESTATION=required \
+  PAW_GATEWAY_HOST=0.0.0.0 uv run python -m paw_server.gateway &
+# container env from the default profile: see tests/identity and paw_server.profile_export, then recreate hermes
+PAW_E2E_DATABASE_URL=.../paw_e2e PAW_E2E_GATEWAY_TOKEN=$(cat ~/.config/paw/gateway.token) \
+PAW_HERMES_URL=http://127.0.0.1:8642 PAW_HERMES_KEY=... uv run pytest tests/test_gateway_real.py
+```
+Verified 2026-11-04 against `paw-hermes:s0`: a real run calls `paw_system_status` through the gateway and every step is stored;
+Calendar not connected is denied `NOT_CONNECTED` and Hermès says so; with native toolsets switched on (`PAW_HERMES_LOCKDOWN=0`)
+the model call carries 19 tools instead of 6, and 25 attempts to use `terminal` were all blocked and audited
+(`NATIVE_TOOL_BLOCKED`) until `agent.max_turns` (from the profile) ended the run as FAILED.

@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from paw_server.api.deps import CurrentActor
 from paw_server.core.errors import ApiError
+from paw_server.modules.gateway import attestation
+from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
 from paw_server.modules.runtime.protocol import TERMINAL_TYPES
 
@@ -69,11 +71,30 @@ def _own_session(request: Request, actor: Any, session_id: UUID) -> dict[str, An
 
 @router.get("/v1/runtime/health")
 def runtime_health(request: Request, actor: CurrentActor) -> dict[str, Any]:
-    rt = request.app.state.runtime
+    st = request.app.state
+    rt = st.runtime
     if rt is None:
-        return {"configured": False, "ready": False, "missing": ["not_configured"]}
+        return {
+            "configured": False,
+            "ready": False,
+            "missing": ["not_configured"],
+            "config": "unknown",
+        }
     missing = rt.missing_capabilities()
-    return {"configured": True, "ready": not missing and rt.healthy(), "missing": missing}
+    with st.pool.connection() as conn:
+        identity.ensure_default_profile(conn)
+        active = identity.get_active(conn, identity.ADMIN)
+        status = attestation.runtime_status(
+            conn, st.settings.gateway_runtime, active.compiled.config_fragment if active else None
+        )
+    # "config" is whether the container runs the tool list and model of the active profile; a mismatch means restart
+    mismatch = st.settings.gateway_attestation == "required" and status.state != "matches"
+    return {
+        "configured": True,
+        "ready": not missing and rt.healthy() and not mismatch,
+        "missing": missing + (["config_" + status.state] if mismatch else []),
+        "config": status.state,
+    }
 
 
 @router.post("/v1/agent-sessions", status_code=201)
