@@ -5,7 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from paw_server import __version__
-from paw_server.api import agent, auth, chat, dev, documents, health, integrations, retrieval
+from paw_server.api import (
+    agent,
+    auth,
+    chat,
+    dev,
+    documents,
+    health,
+    integrations,
+    profile,
+    retrieval,
+)
 from paw_server.core.config import Settings, get_settings
 from paw_server.core.errors import install_error_handlers
 from paw_server.core.logging import configure_logging
@@ -79,6 +89,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(integrations.router)
     app.include_router(agent.router)
+    app.include_router(profile.router)
     app.include_router(documents.router)
     app.include_router(retrieval.router)
     app.include_router(chat.router)
