@@ -43,7 +43,8 @@ export function LoginForm() {
   }, [])
 
   const showGoogle = !!cfg?.google
-  const showToken = !cfg || cfg.mode !== 'google'
+  // Google is the only sign-in once it is configured; the token form exists for token-only dev mode
+  const showToken = !showGoogle
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -81,7 +82,7 @@ export function LoginForm() {
         )}
         {showToken && (
           <form onSubmit={submit} aria-labelledby="login-h">
-            <label htmlFor="token">{showGoogle ? 'Or use the developer access token' : 'Owner access token'}</label>
+            <label htmlFor="token">Owner access token</label>
             <input
               id="token"
               type="password"
@@ -91,7 +92,7 @@ export function LoginForm() {
               required
               aria-describedby={error ? 'login-err' : undefined}
             />
-            <button type="submit" className={showGoogle ? '' : 'primary'} disabled={busy || !token.trim()}>
+            <button type="submit" className="primary" disabled={busy || !token.trim()}>
               {busy ? 'Checking…' : 'Sign in'}
             </button>
           </form>

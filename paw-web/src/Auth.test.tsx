@@ -31,12 +31,12 @@ afterEach(() => {
   setCsrf(null)
 })
 
-it('offers Google and the developer token when both are enabled', async () => {
+it('shows only Google when Google is enabled, even in both mode', async () => {
   api({ '/v1/auth/config': cfg('both', true) })
   render(<App />)
   const link = await screen.findByRole('link', { name: /continue with google/i })
   expect(link).toHaveAttribute('href', expect.stringContaining('/v1/auth/google/start?return_to='))
-  expect(screen.getByLabelText(/developer access token/i)).toBeInTheDocument()
+  expect(screen.queryByLabelText(/access token/i)).not.toBeInTheDocument()
 })
 
 it('hides the token form in Google-only mode', async () => {
