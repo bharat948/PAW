@@ -36,6 +36,8 @@ mkdir -p ~/.config/paw && umask 077
 Never commit this file or paste it anywhere: it holds your OpenAI key. Use a dedicated OpenAI project key with a monthly budget.
 
 ## 3. Start, check, stop
+**Shortcut:** once steps 1 and 2 are done, `./dev.sh` starts Hermès (and the stub tool server) together with the rest of PAW, and `./dev.sh stop` stops them. `HERMES=0 ./dev.sh` skips it. The manual commands below do the same thing by hand.
+
 ```
 docker compose --env-file ~/.config/paw/s0.env -f deploy/hermes/compose.s0.yaml up -d
 curl -s -o /dev/null -w "%{http_code}\n" localhost:8642/v1/capabilities     # 401 = up and rejecting unauthenticated calls
@@ -60,6 +62,7 @@ cd paw-server
 PAW_STUB_URL=http://127.0.0.1:8001 PAW_HERMES_URL=http://127.0.0.1:8642 \
 PAW_HERMES_KEY=$(grep ^API_SERVER_KEY ~/.config/paw/s0.env | cut -d= -f2) \
   uv run pytest tests/contract/hermes          # expect: 19 passed, 1 xfailed (costs a few cents)
+uv run pytest tests/runtime tests/contract     # with the same env vars: also runs the adapter against the real container
 uv run pytest tests/contract                   # no Hermès needed: runs against the fake
 ```
 

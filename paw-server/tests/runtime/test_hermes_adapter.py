@@ -160,6 +160,14 @@ def test_stream_drops_duplicates_and_honours_after_seq():
     assert [e.source_event_id for e in a.stream_events("R", after_seq=1)] == ["R:2"]
 
 
+def test_resuming_after_the_terminal_event_yields_nothing_and_does_not_poll():
+    def h(req):
+        assert req.url.path.endswith("/events"), "must not fall back to status polling"
+        return sse(delta(0), done(1))
+
+    assert list(adapter(h).stream_events("R", after_seq=1)) == []
+
+
 def test_a_gap_in_seq_is_a_protocol_fault_not_silently_accepted():
     a = adapter(lambda r: sse(delta(0), delta(2), done(3)))
     it = a.stream_events("R")

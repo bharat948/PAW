@@ -159,6 +159,8 @@ class HermesAdapter:
                             continue
                         seq = int(ev.source_event_id.rsplit(":", 1)[1])
                         if seq <= last:
+                            if ev.terminal:
+                                return  # the caller already has this terminal event: never invent a second one
                             continue  # replayed after a reconnect
                         if seq != last + 1:
                             raise RuntimeError_("protocol", f"event gap {last} -> {seq}")

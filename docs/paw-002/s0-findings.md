@@ -107,3 +107,11 @@ cd paw-server && PAW_STUB_URL=http://127.0.0.1:8001 PAW_HERMES_URL=http://127.0.
 Image defaults: native-tool lockdown on, memory off, guard plugin on, MCP resources/prompts/sampling/elicitation off, `trust: full`.
 Knobs for experiments only: `PAW_HERMES_LOCKDOWN=0`, `PAW_HERMES_GUARD=0`, `PAW_GUARD_MODE=off|raise`, `PAW_MCP_TRUST=untrusted`.
 Costs a few cents of OpenAI usage per run. Never run on untrusted pull requests.
+
+## 5. Adapter run against the real image (002A step 2, 2026-11-03)
+
+`tests/runtime/test_hermes_adapter_real.py`: 7 passed against `paw-hermes:s0` (c7da41dd) with the contract suite (19 passed, 1 xfailed).
+- After a run finishes, `GET /v1/runs/{id}/events` **replays the full history** with the same `seq` values, so reconnecting is safe and ids are stable.
+- Resuming with `after_seq` at or past the terminal event must yield nothing. The first version of the adapter fabricated a second terminal event from the run status in that case (found by this test, fixed, unit-tested).
+- A gateway tool call arrives as `mcp__paw__paw_echo` and normalises to `paw_echo` with `native: false`; no `unknown` events were produced in any real run.
+- `stop` during a long reply ends as `run.cancelled` and status `cancelled`.
