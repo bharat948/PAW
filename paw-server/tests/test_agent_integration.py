@@ -169,6 +169,10 @@ def test_authentication_and_ownership(h, env):
                          ("get", f"/v1/agent-runs/{run['id']}/events"), ("post", f"/v1/agent-runs/{run['id']}/cancel"),
                          ("get", "/v1/runtime/health")]:  # fmt: skip
         assert getattr(h.c, method)(path).status_code == 401, path
+    sql(
+        env,
+        "INSERT INTO actors (id, kind, display_name) VALUES ('someone-else', 'human', 'Someone')",
+    )
     ws = sql(env, "SELECT id FROM workspaces LIMIT 1")[0][0]
     other = sql(
         env,
@@ -267,9 +271,7 @@ def test_worker_sends_the_pae_run_id_instructions_and_prior_turns_as_history(h):
     h.worker.run_once()
     one, two = h.rt.created
     assert (
-        one["run_id"] == first["id"]
-        and one["history"] == []
-        and "Admin Hermes" in one["instructions"]
+        one["run_id"] == first["id"] and one["history"] == [] and "PAW Admin" in one["instructions"]
     )
     assert two["history"] == [
         {"role": "user", "content": "my name is Bharat"},

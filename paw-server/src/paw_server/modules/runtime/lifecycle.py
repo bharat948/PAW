@@ -31,17 +31,13 @@ STATE_FOR_TERMINAL_EVENT = {
 }
 EVENT_FOR_STATE = {v: k for k, v in STATE_FOR_TERMINAL_EVENT.items()}
 RUN_COLUMNS = (
-    "id, session_id, actor_id, client_request_id, user_message, state, hermes_run_id, requested_model, "
+    "id, session_id, actor_id, executing_actor_id, client_request_id, user_message, state, hermes_run_id, requested_model, "
     "tokens_in, tokens_out, cache_read, cache_write, error_code, output, queued_at, started_at, finished_at"
 )
 FIELDS = {
     "hermes_run_id", "error_code", "output", "tokens_in", "tokens_out", "cache_read", "cache_write",
     "requested_model", "served_model", "cost_usd", "rate_card_version",
 }  # fmt: skip
-INSTRUCTIONS = (
-    "You are Admin Hermes, the administrative assistant inside PAW (a personal workspace). "
-    "Be concise and honest. If you cannot do something with the tools you have, say so."
-)
 
 
 class AdmissionError(Exception):
@@ -204,6 +200,18 @@ def claim_next(conn: Conn, runtime_id: UUID) -> dict[str, Any] | None:
         assert run is not None
     append_event(conn, run["id"], "run.state", {"state": "DISPATCHING"}, None)
     return run
+
+
+def bind_profile(
+    conn: Conn, run_id: UUID, *, profile_version_id: UUID, version: int, compiled_hash: str
+) -> None:
+    """Record which profile version a run uses. Set once at claim; a later activation never changes it."""
+    conn.execute(
+        "UPDATE agent_runs SET profile_version_id = %s, profile_version = %s, compiled_hash = %s "
+        "WHERE id = %s AND profile_version_id IS NULL",
+        (profile_version_id, version, compiled_hash, run_id),
+    )
+    conn.commit()
 
 
 def heartbeat(conn: Conn, run_id: UUID) -> None:

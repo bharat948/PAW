@@ -8,6 +8,7 @@ from uuid import UUID
 from psycopg_pool import ConnectionPool
 
 from paw_server.core.config import Settings
+from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
 from paw_server.modules.runtime.protocol import AgentRuntime, RuntimeError_, RuntimeEvent
 
@@ -33,6 +34,7 @@ class AgentWorker:
         self.pool, self.runtime, self.settings = pool, runtime, settings
         with pool.connection() as conn:
             self.runtime_id = lc.ensure_runtime(conn)
+            identity.ensure_default_profile(conn)
 
     def recover(self) -> int:
         with self.pool.connection() as conn:
@@ -74,12 +76,25 @@ class AgentWorker:
     def _process(self, run: dict[str, Any]) -> None:
         run_id: UUID = run["id"]
         with self.pool.connection() as conn:
+            profile = identity.get_active(conn, run["executing_actor_id"])
+            if profile is None:  # no active identity: refuse to run rather than run unconfigured
+                self._end(
+                    run_id,
+                    "FAILED",
+                    error_code="no_active_profile",
+                    payload={"reason": "no_active_profile"},
+                )
+                return
+            lc.bind_profile(
+                conn, run_id, profile_version_id=profile.version_id, version=profile.version,
+                compiled_hash=profile.compiled.compiled_hash,
+            )  # fmt: skip
             history = lc.history_for(conn, run["session_id"], run_id)
         try:
             handle = self.runtime.create_run(
                 run_id=str(run_id),
                 input=run["user_message"],
-                instructions=lc.INSTRUCTIONS,
+                instructions=profile.compiled.run_instructions,
                 history=history,
             )
         except RuntimeError_ as exc:
