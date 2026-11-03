@@ -7,10 +7,16 @@ import uvicorn
 from paw_server.core.config import get_settings
 from paw_server.core.logging import configure_logging
 from paw_server.db.pool import create_pool
+from paw_server.modules.auth.oidc import GoogleIdentityProvider
+from paw_server.modules.connectors.calendar_service import CalendarService
+from paw_server.modules.connectors.google_calendar import GoogleCalendarProvider
 from paw_server.modules.gateway.builtin import builtin_registry
 from paw_server.modules.gateway.registry import sync_registry
 from paw_server.modules.gateway.server import build_app
 from paw_server.modules.gateway.service import GatewayService
+from paw_server.modules.gateway.shaping import ContinuationStore
+from paw_server.modules.gateway.tools import ToolDeps, attach_handlers
+from paw_server.modules.ingestion.embedding import build_embedder
 
 log = logging.getLogger("paw.gateway")
 
@@ -23,10 +29,20 @@ def main() -> None:
         raise SystemExit(2)
     pool = create_pool(settings)
     pool.open()
-    registry = builtin_registry()
+    store = ContinuationStore()
+    calendar = None
+    if settings.google_client_id and settings.google_client_secret and settings.connector_key:
+        idp = GoogleIdentityProvider(settings.google_client_id, settings.google_client_secret)
+        provider = GoogleCalendarProvider(
+            settings.google_client_id, settings.google_client_secret, identity=idp
+        )
+        calendar = CalendarService(pool, provider, settings.connector_key)
+    deps = ToolDeps(pool, settings, build_embedder(settings), calendar, store)
+    registry = attach_handlers(builtin_registry(), deps)
     with pool.connection() as conn:
         sync_registry(conn, registry)
-    app = build_app(GatewayService(pool, registry, settings), registry, settings.gateway_token)
+    service = GatewayService(pool, registry, settings, continuations=store)
+    app = build_app(service, registry, settings.gateway_token)
     log.info(
         "gateway listening", extra={"host": settings.gateway_host, "port": settings.gateway_port}
     )

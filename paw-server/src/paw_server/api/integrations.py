@@ -1,7 +1,6 @@
 """Integrations hub: what PAW can connect to, and the Google Calendar connector (read-only)."""
 
 import logging
-from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
@@ -13,6 +12,7 @@ from paw_server.core.errors import ApiError
 from paw_server.modules.auth import service as auth
 from paw_server.modules.auth.oidc import new_pkce
 from paw_server.modules.connectors import store
+from paw_server.modules.connectors.calendar_service import CalendarError, CalendarService
 from paw_server.modules.connectors.google_calendar import ConnectorError
 
 log = logging.getLogger("paw.integrations")
@@ -156,35 +156,6 @@ def callback(
     return _back(request, attempt.return_to)
 
 
-def _access_token(request: Request, live: store.Connection) -> str:
-    cal, st = request.app.state.calendar, request.app.state
-    key = st.settings.connector_key
-    with st.pool.connection() as conn:
-        sec = store.load_secrets(conn, key, live.id)
-    if sec is None:  # key rotated or row damaged: the user must reconnect
-        with st.pool.connection() as conn:
-            store.set_status(conn, live.id, "needs_reauth", "secret_unreadable")
-        raise ApiError(409, "needs_reauth", "Reconnect Google Calendar.")
-    if datetime.fromisoformat(sec["expires_at"]) > datetime.now(UTC) + timedelta(seconds=60):
-        return str(sec["access_token"])
-    try:
-        token, expires = cal.refresh(sec["refresh_token"])
-    except ConnectorError as exc:
-        if exc.code == "revoked":
-            with st.pool.connection() as conn:
-                store.set_status(conn, live.id, "needs_reauth", "revoked")
-            raise ApiError(409, "needs_reauth", "Reconnect Google Calendar.") from exc
-        raise ApiError(503, "calendar_unavailable", "Google Calendar is unavailable.") from exc
-    with st.pool.connection() as conn:
-        store.update_secrets(
-            conn,
-            key,
-            live.id,
-            {**sec, "access_token": token, "expires_at": expires.isoformat()},
-        )
-    return str(token)
-
-
 @router.get("/google-calendar/events")
 def events(
     request: Request,
@@ -193,25 +164,19 @@ def events(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict[str, object]:
     cal = _cal(request)
-    with request.app.state.pool.connection() as conn:
-        live = store.get_live(conn, actor.id, PROVIDER)
-    if live is None or live.status != "active":
-        raise ApiError(
-            409, "needs_reauth" if live else "not_connected", "Google Calendar is not connected."
-        )
-    token = _access_token(request, live)
-    now = datetime.now(UTC)
+    svc = CalendarService(request.app.state.pool, cal, request.app.state.settings.connector_key)
     try:
-        items = cal.list_events(
-            token, time_min=now, time_max=now + timedelta(days=days), limit=limit
+        got = svc.list_events(actor.id, days=days, limit=limit)
+    except CalendarError as exc:
+        if exc.code == "unavailable":
+            raise ApiError(503, "calendar_unavailable", "Google Calendar is unavailable.") from exc
+        msg = (
+            "Reconnect Google Calendar."
+            if exc.code == "needs_reauth"
+            else "Google Calendar is not connected."
         )
-    except ConnectorError as exc:
-        if exc.code == "revoked":
-            with request.app.state.pool.connection() as conn:
-                store.set_status(conn, live.id, "needs_reauth", "revoked")
-            raise ApiError(409, "needs_reauth", "Reconnect Google Calendar.") from exc
-        raise ApiError(503, "calendar_unavailable", "Google Calendar is unavailable.") from exc
-    return {"account_email": live.account_email, "events": items}
+        raise ApiError(409, exc.code, msg) from exc
+    return {"account_email": got.account_email, "events": got.events}
 
 
 @router.delete("/google-calendar", status_code=204)

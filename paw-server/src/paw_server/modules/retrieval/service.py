@@ -268,3 +268,18 @@ def search(
         embedding_model=embedder.model,
         semantic=getattr(embedder, "semantic", True),
     )
+
+
+def fetch_chunk(conn: Conn, workspace_id: UUID, chunk_id: UUID) -> dict[str, Any] | None:
+    """One passage with its source location, or None when it does not exist, is deleted, or is another workspace's."""
+    row = conn.execute(
+        """SELECT c.id, c.ordinal, c.text, c.page_number, c.section, c.source_start, c.source_end,
+                  d.id AS document_id, d.display_name, d.media_type,
+                  (d.current_version_id = c.version_id) AS is_current
+           FROM document_chunks c JOIN document_versions v ON v.id = c.version_id
+           JOIN documents d ON d.id = v.document_id
+           WHERE c.id = %s AND c.workspace_id = %s AND d.workspace_id = %s AND d.deleted_at IS NULL""",
+        (chunk_id, workspace_id, workspace_id),
+    ).fetchone()
+    conn.commit()
+    return row
