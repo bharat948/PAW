@@ -137,18 +137,28 @@ def admit(
 
 
 # ---- events -------------------------------------------------------------------------------------------------
-def append_event(
+def _insert_event(
     conn: Conn, run_id: UUID, type_: str, payload: dict[str, Any], source_event_id: str | None
 ) -> int | None:
-    """Next seq for the run, or None when this source event was already stored (a replay)."""
+    """Insert the run's next event inside the caller's transaction. The worker, the gateway and the lifecycle all write
+    events for the same run, so seq allocation is serialised with a per-run advisory lock (released at commit).
+    Returns the seq, or None when this source event was already stored (a replay)."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(run_id),))
     row = conn.execute(
         "INSERT INTO agent_run_events (run_id, seq, type, payload, source_event_id) "
         "SELECT %s, coalesce(max(seq), 0) + 1, %s, %s, %s FROM agent_run_events WHERE run_id = %s "
         "ON CONFLICT (run_id, source_event_id) WHERE source_event_id IS NOT NULL DO NOTHING RETURNING seq",
         (run_id, type_, Jsonb(payload), source_event_id, run_id),
     ).fetchone()
-    conn.commit()
     return row["seq"] if row else None
+
+
+def append_event(
+    conn: Conn, run_id: UUID, type_: str, payload: dict[str, Any], source_event_id: str | None
+) -> int | None:
+    seq = _insert_event(conn, run_id, type_, payload, source_event_id)
+    conn.commit()
+    return seq
 
 
 def events_after(
@@ -231,11 +241,7 @@ def move(conn: Conn, run_id: UUID, to: str, **fields: Any) -> bool:
         (to, *fields.values(), run_id, sources),
     ).fetchone()
     if row is not None:
-        conn.execute(
-            "INSERT INTO agent_run_events (run_id, seq, type, payload) "
-            "SELECT %s, coalesce(max(seq), 0) + 1, 'run.state', %s FROM agent_run_events WHERE run_id = %s",
-            (run_id, Jsonb({"state": to}), run_id),
-        )
+        _insert_event(conn, run_id, "run.state", {"state": to}, None)
     conn.commit()
     return row is not None
 
@@ -276,12 +282,7 @@ def finish(
             ]  # keep event and state consistent after the cancel mapping above
         sets = ", ".join(["state = %s", "finished_at = now()", *(f"{k} = %s" for k in fields)])
         conn.execute(f"UPDATE agent_runs SET {sets} WHERE id = %s", (to, *fields.values(), run_id))
-        conn.execute(
-            "INSERT INTO agent_run_events (run_id, seq, type, payload, source_event_id) "
-            "SELECT %s, coalesce(max(seq), 0) + 1, %s, %s, %s FROM agent_run_events WHERE run_id = %s "
-            "ON CONFLICT (run_id, source_event_id) WHERE source_event_id IS NOT NULL DO NOTHING",
-            (run_id, etype, Jsonb(payload or {}), source_event_id, run_id),
-        )
+        _insert_event(conn, run_id, etype, payload or {}, source_event_id)
         conn.execute("DELETE FROM agent_run_leases WHERE run_id = %s", (run_id,))
     return to
 
@@ -300,11 +301,7 @@ def request_cancel(conn: Conn, run_id: UUID) -> tuple[str, str | None]:
             pass
         elif state == "RUNNING":
             conn.execute("UPDATE agent_runs SET state = 'CANCELLING' WHERE id = %s", (run_id,))
-            conn.execute(
-                "INSERT INTO agent_run_events (run_id, seq, type, payload) "
-                "SELECT %s, coalesce(max(seq), 0) + 1, 'run.state', %s FROM agent_run_events WHERE run_id = %s",
-                (run_id, Jsonb({"state": "CANCELLING"}), run_id),
-            )
+            _insert_event(conn, run_id, "run.state", {"state": "CANCELLING"}, None)
             return "stopping", row["hermes_run_id"]
         elif state == "DISPATCHING":
             return "not_yet", None

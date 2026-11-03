@@ -18,6 +18,7 @@ dependencies = [
   "pyjwt[crypto]>=2.9",
   "cryptography>=50.0.2",
   "jsonschema>=4.26.0",
+  "mcp>=2.3.0",
 ]
 
 [dependency-groups]

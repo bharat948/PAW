@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     hermes_url: str = ""
     hermes_key: str = ""
     agent_queue_limit: int = Field(default=5, ge=1, le=100)  # queued runs across all sessions
+    # MCP gateway (PAW-002D): the only tool surface Hermes has. Internal listener, static bearer for the runtime.
+    gateway_token: str = ""
+    gateway_host: str = "127.0.0.1"
+    gateway_port: int = Field(default=8100, ge=1, le=65535)
+    gateway_runtime: str = "hermes"  # which agent_runtimes row this credential authenticates
+    gateway_max_calls_per_run: int = Field(default=40, ge=1)
+    # off = do not require the runtime's attestation report (until the Hermes plugin reporter ships); required = fail closed
+    gateway_attestation: Literal["off", "required"] = "off"
     agent_stop_deadline_s: int = Field(
         default=30, ge=1
     )  # CANCELLING longer than this becomes INTERRUPTED
