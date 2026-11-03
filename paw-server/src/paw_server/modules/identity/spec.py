@@ -97,6 +97,7 @@ DEFAULT_ADMIN_SPEC = ActorProfileSpec(
             "calendar_list_events",
             "docs_get_source",
             "docs_search",
+            "paw_continue",
             "paw_run_status",
             "paw_system_status",
         ]

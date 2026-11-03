@@ -35,6 +35,7 @@ def test_the_builtin_registry_is_valid_and_complete():
         "calendar_list_events",
         "docs_get_source",
         "docs_search",
+        "paw_continue",
         "paw_run_status",
         "paw_system_status",
     ]
@@ -197,7 +198,7 @@ def test_sync_writes_every_tool_and_is_idempotent(pool, conn):
     rows = conn.execute(
         "SELECT name, side_effect_class, provider FROM gateway_tools ORDER BY name"
     ).fetchall()
-    assert len(rows) == 5 and ("calendar_list_events", "read", "google_calendar") in rows
+    assert len(rows) == 6 and ("calendar_list_events", "read", "google_calendar") in rows
 
 
 @pytest.mark.integration
@@ -228,7 +229,7 @@ def test_tools_removed_from_code_are_disabled_not_deleted(pool, conn):
         sync_registry(c, builtin_registry())
         sync_registry(c, ToolRegistry([builtin_registry().get("docs_search")]))
         assert enabled_tools(c) == {"docs_search"}
-    assert conn.execute("SELECT count(*) FROM gateway_tools").fetchone() == (5,)
+    assert conn.execute("SELECT count(*) FROM gateway_tools").fetchone() == (6,)
 
 
 @pytest.mark.integration

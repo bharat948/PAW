@@ -58,6 +58,23 @@ def builtin_specs() -> list[ToolSpec]:
             },
         ),
         ToolSpec(
+            name="paw_continue",
+            description="Read the next part of a long tool result. Use the next_cursor from the previous part.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "cursor": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 64,
+                        "pattern": "^[A-Za-z0-9_-]+$",
+                    }
+                },
+                "required": ["cursor"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolSpec(
             name="calendar_list_events",
             description="List the owner's upcoming Google Calendar events (title, start, end, location). Read-only.",
             input_schema={

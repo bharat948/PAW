@@ -19,7 +19,8 @@ from paw_server.core.config import Settings
 from paw_server.modules.connectors import store as connector_store
 from paw_server.modules.gateway.policy import Decision, PolicyInput, RunBinding, decide
 from paw_server.modules.gateway.registry import ToolRegistry, enabled_tools, validate_arguments
-from paw_server.modules.gateway.shaping import shape
+from paw_server.modules.gateway.shaping import ContinuationStore, shape
+from paw_server.modules.gateway.tools import ToolError
 from paw_server.modules.runtime import lifecycle as lc
 
 log = logging.getLogger("paw.gateway")
@@ -28,6 +29,7 @@ CALLABLE_STATES = (
     "DISPATCHING",
     "RUNNING",
 )  # Hermes may call a tool before the worker records RUNNING
+ERROR_REASONS = ("HANDLER_ERROR", "TOOL_ERROR")
 VISIBLE_DENIAL = "This tool call was not allowed ({reason})."
 
 
@@ -81,8 +83,10 @@ class GatewayService:
         *,
         connection_status: ConnectionStatus | None = None,
         attestation: Callable[[UUID], str] | None = None,
+        continuations: ContinuationStore | None = None,
     ) -> None:
         self.pool, self.registry, self.settings = pool, registry, settings
+        self.continuations = continuations or ContinuationStore()
         self._connection_status = connection_status or self._db_connection_status
         self._attestation = attestation or (lambda run_id: "ok")
 
@@ -155,7 +159,13 @@ class GatewayService:
             try:
                 if spec.handler is None:
                     raise NotImplementedError("tool has no handler")
-                result_text, truncated = shape(spec.handler(ctx, args))
+                shaped = shape(
+                    tool_name, spec.handler(ctx, args), run_id=ctx.run_id, store=self.continuations
+                )
+                result_text, truncated = shaped.text, shaped.truncated
+            except ToolError as exc:  # a failure the tool chose to explain to the model
+                final = Decision(False, "TOOL_ERROR")
+                error = str(exc)[:200]
             except (
                 Exception
             ) as exc:  # a broken tool must never crash the gateway or leak internals to the model
@@ -166,9 +176,7 @@ class GatewayService:
                 error = type(exc).__name__
         latency_ms = int((time.monotonic() - started) * 1000)
         outcome_kind = (
-            "allowed"
-            if final.allowed
-            else ("error" if final.reason == "HANDLER_ERROR" else "denied")
+            "allowed" if final.allowed else ("error" if final.reason in ERROR_REASONS else "denied")
         )
         self._audit(
             invocation_id=invocation_id, run=run, tool=tool_name, spec=spec, args=args, decision=outcome_kind,
@@ -177,13 +185,12 @@ class GatewayService:
         )  # fmt: skip
         if final.allowed:
             return ToolOutcome(False, result_text, "allowed", "OK", invocation_id)
-        return ToolOutcome(
-            True,
-            VISIBLE_DENIAL.format(reason=final.reason),
-            outcome_kind,
-            final.reason,
-            invocation_id,
+        text = (
+            f"The tool reported an error: {error}"
+            if final.reason == "TOOL_ERROR"
+            else VISIBLE_DENIAL.format(reason=final.reason)
         )
+        return ToolOutcome(True, text, outcome_kind, final.reason, invocation_id)
 
     def _audit(
         self, *, invocation_id: UUID, run: dict[str, Any] | None, tool: str, spec: Any, args: Any, decision: str,
