@@ -1,6 +1,6 @@
 # Design: the Admin Hermès foundation for many actors
 
-Written 2026-11-04 for Bharat. Status: **F1 to F3 accepted 2026-11-04**; F4 at its default; L1 to L8 pending your answers.
+Written 2026-11-04 for Bharat. Status: **all decisions accepted 2026-11-04** (section 7). The 002B build plan is in `plan-002b.md`.
 
 ## 0. What you asked for
 
@@ -50,8 +50,10 @@ spec's own rule, "Hermès has exactly one way to act on the world: the PAW gatew
 4. The proposal appears in your approvals inbox (and on the Profile page) with the exact contract. You approve with a
    recent Google sign-in (step-up, already built).
 5. PAW creates the actor, compiles its contract, issues it its own gateway credential, and records "should be running".
-6. The supervisor sees that, starts a container from the same pinned image with that actor's settings, and waits for
-   the container to prove (attestation, already built) that it runs exactly the approved tools and model.
+6. Approval registers the actor as **available** (approved, not running). Its **first assignment** makes the supervisor
+   start a container from the same pinned image with that actor's settings, and the container must prove (attestation,
+   already built) that it runs exactly the approved tools and model. A contract change for a sleeping actor only moves
+   its desired version; the next start uses it. The Actors page distinguishes approved, starting, ready and sleeping.
 7. The actor is now ready. Admin can delegate to it ("ask research-hermes to find..."), and later Story 3 can assign it
    tickets. Every step above is a ledger entry.
 
@@ -128,12 +130,26 @@ plus a global daily cap.
 - Every actor's container passes attestation before its first tool call (already built), so a container that drifts
   from its contract is refused.
 
-## 7. Decisions
+## 7. Decisions (accepted 2026-11-04)
 
-| # | Question | Default |
-|---|---|---|
-| F1 | Who starts containers | **accepted:** a separate supervisor with restricted Docker access, never Hermès itself (replaces D-b) |
-| F2 | Who may create an actor | **accepted:** Admin proposes, you approve with a recent sign-in |
-| F3 | When actor containers run | **accepted:** on demand, stopped after 15 idle minutes; Admin always on |
-| F4 | Max actors running at once | 3 |
-| L1 to L8 | the ledger questions from the previous message | conversation list; partial answers kept and marked; tool results kept, long ones stubbed; summaries at about 24k tokens with `gpt-4o-mini`; delete = hidden now, erased after 30 days, plus "forget this message"; kept until deleted; edit = fork; daily cost cap only |
+| # | Decision |
+|---|---|
+| F1 | A separate supervisor with restricted Docker access starts containers; never Hermès itself (replaces D-b) |
+| F2 | Admin proposes, the owner approves with a recent sign-in |
+| F3 | On demand: approval makes an actor available; its first assignment starts the container; stopped after 15 idle minutes; Admin always on |
+| F4 | At most 3 running actor containers in total, including Admin, one active run per actor. Configurable; excess work queues. A starting ceiling until RAM is measured on the home laptop |
+| L1 | Conversation list: top-level chats, newest by last activity, first-message title (renamable), actor name beside the title |
+| L2 | Partial answers: exact text kept and marked unfinished in the UI and in the next turn's context; whether something happened is decided by the recorded tool outcome, never by the answer's wording |
+| L3 | Tool results: kept with timestamps and scope checks; above about 2,000 tokens a short summary plus a reference; full result for authorised viewers; changing facts (tomorrow's calendar) are fetched again when freshness matters |
+| L4 | Summaries: from about 24,000 recent-turn tokens, or sooner if the model's context is smaller; `gpt-4o-mini`, configurable; shown with the messages they cover; charged to the conversation's actor budget |
+| L5 | Delete: hidden at once, live data purged after 30 days. Forget this message: excluded from future context at once, including summaries and derived memories, invalidated before the next run. Backup expiry disclosed (7 daily + 4 weekly copies: up to about 35 days); deletions re-applied on restore. Provider requests already sent cannot be recalled |
+| L6 | Retention: until deleted; delegated chats follow the same rule; deleting a parent states explicitly whether its delegated chats go too |
+| L7 | Editing: fork at the edited message; the original branch and its evidence stay; the new branch starts with the replacement text; a fork never replays a tool call or carries over an approval |
+| L8 | Cost: no per-conversation cap. Per-run ceiling, per-actor daily limit, one global daily limit; budget reserved atomically before dispatch so two workers cannot both spend the last of it; a parent task shows its total cost including children |
+| L9 | Delegated chats nest under the parent: actor, task, status, cost, link. A blocked child that needs the owner also appears in the attention inbox |
+| L10 | Owner sees all activity across actors, including actor-to-actor chats, tool calls, results and decisions; credentials redacted. That visibility never gives actors access to each other's history |
+
+**Schema rule from these decisions:** keep three roles apart everywhere. The **data owner** (the workspace owner, you),
+the **requester** (who asked: you, or Admin when it delegates) and the **executor** (the actor that does the work).
+Lineage has two different links: `forked_from` carries conversation history up to an edit point; `delegated_from` carries
+a scoped assignment and only the context the worker needs.
