@@ -127,6 +127,8 @@ Nothing below is built unless stated; S0 has not been run against a real Hermès
 
 ## 5. 002C: identity, ActorProfile and compiler (S)
 
+Detailed plan for 002C and 002D, including the hooks later stories need: [plan-002c-002d.md](plan-002c-002d.md).
+
 **Depends on:** 002A. **Migration 0007.** Tables: `actors`, `actor_profile_versions` (immutable spec, one active per actor via partial unique index), `actor_compiled_profiles`.
 **Code** (`modules/actors/`): JSON Schema for ActorProfile v1, compiler (SOUL.md, config fragment, gateway policy rows, constraints text, `compiled_hash`), activation with confirmation token for tool/budget changes, restart-between-runs, runtime hash report; web profile view with diff.
 **Tests:** R01 update-after-create rejected and partial unique index; R02 golden files (deterministic); R03 edit SOUL.md claiming a permission, gateway still denies; R04/T211 tamper with the mounted file → `/ready` 503; R05 agent-initiated activation denied and in-flight run keeps its version.
