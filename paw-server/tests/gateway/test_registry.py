@@ -169,7 +169,6 @@ def test_chunk_id_must_look_like_an_id():
 # ---- the PostgreSQL mirror and audit table -----------------------------------------------------------------------
 
 
-
 @pytest.fixture
 def conn(db_url):
     command.upgrade(alembic_config(db_url), "head")
