@@ -19,7 +19,7 @@ start_hermes() {
   # the tool server must answer before Hermès starts, or Hermès parks it for good
   for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8001/_calls && break; sleep 1; done
   "${HERMES_COMPOSE[@]}" up -d hermes >/dev/null
-  for _ in $(seq 1 60); do [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8642/v1/capabilities)" == "401" ]] && { echo "hermes http://127.0.0.1:8642 (up)"; return; }; sleep 1; done
+  for _ in $(seq 1 60); do [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8642/v1/capabilities)" == "401" ]] && { export PAW_HERMES_URL=http://127.0.0.1:8642 PAW_HERMES_KEY="$(grep '^API_SERVER_KEY=' "$HERMES_ENV" | cut -d= -f2-)"; echo "hermes http://127.0.0.1:8642 (up)"; return; }; sleep 1; done
   echo "hermes: did not become ready, see: docker logs paw-hermes-s0-hermes-1"
 }
 
@@ -42,6 +42,7 @@ trap 'kill "${pids[@]}" 2>/dev/null || true; wait 2>/dev/null || true' EXIT INT 
 prefix() { sed -u "s/^/[$1] /"; }
 (cd paw-server && make run 2>&1 | prefix api) & pids+=($!)
 (cd paw-server && make worker 2>&1 | prefix worker) & pids+=($!)
+if [[ -n "${PAW_HERMES_URL:-}" ]]; then (cd paw-server && make agent-worker 2>&1 | prefix agent) & pids+=($!); fi
 (cd paw-web && npm run dev 2>&1 | prefix web) & pids+=($!)
 echo "web http://localhost:5173  |  api http://localhost:8000/docs  |  token in paw-server/.env (PAW_OWNER_TOKEN)"
 wait

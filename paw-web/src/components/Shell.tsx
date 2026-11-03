@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import { useAuth } from '../auth'
 import type { Route } from '../hooks/useHashRoute'
-import { IconChat, IconFile, IconLogo, IconPlug, IconSearch } from './icons'
+import { IconChat, IconFile, IconLogo, IconPlug, IconSearch, IconSpark } from './icons'
 
 const LINKS: { route: Route; label: string; authed: boolean; icon: ReactNode }[] = [
   { route: 'documents', label: 'Documents', authed: true, icon: <IconFile size={16} /> },
   { route: 'search', label: 'Search', authed: true, icon: <IconSearch size={16} /> },
   { route: 'ask', label: 'Ask', authed: true, icon: <IconChat size={16} /> },
+  { route: 'agent', label: 'Agent', authed: true, icon: <IconSpark size={16} /> },
   { route: 'integrations', label: 'Integrations', authed: true, icon: <IconPlug size={16} /> },
   { route: 'status', label: 'Status', authed: false, icon: null },
 ]

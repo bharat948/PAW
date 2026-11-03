@@ -138,6 +138,105 @@ export const disconnectCalendar = () => request<void>('/v1/integrations/google-c
 export const connectCalendarUrl = (returnTo = '/#/integrations') =>
   `${API_BASE_URL}/v1/integrations/google-calendar/connect?return_to=${encodeURIComponent(returnTo)}`
 
+// ---- Admin Hermes agent (see paw-server api/agent.py) ----
+export type RunState = 'QUEUED' | 'DISPATCHING' | 'RUNNING' | 'CANCELLING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED'
+export const RUN_TERMINAL: RunState[] = ['SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED']
+export interface AgentRun {
+  id: string
+  session_id: string
+  client_request_id: string
+  message: string
+  state: RunState
+  output: string | null
+  error_code: string | null
+  usage: { input_tokens: number; output_tokens: number } | null
+  queued_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+export interface AgentEvent {
+  seq: number
+  type: string
+  payload: Record<string, unknown>
+}
+export interface RuntimeHealth {
+  configured: boolean
+  ready: boolean
+  missing: string[]
+}
+export const getRuntimeHealth = () => request<RuntimeHealth>('/v1/runtime/health')
+export const createAgentSession = (title = '') =>
+  request<{ id: string }>('/v1/agent-sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+export const listAgentRuns = (sessionId: string) =>
+  request<{ runs: AgentRun[] }>(`/v1/agent-sessions/${sessionId}/runs`)
+export const submitAgentRun = (sessionId: string, clientRequestId: string, message: string) =>
+  request<AgentRun>(`/v1/agent-sessions/${sessionId}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_request_id: clientRequestId, message }),
+  })
+export const getAgentRun = (runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}`)
+export const cancelAgentRun = (runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}/cancel`, { method: 'POST' })
+
+/**
+ * Reads a run's stored events (server-sent events over fetch, so the Authorization header works).
+ * Resolves with the last sequence number delivered; the caller reconnects with that number if the run is not finished.
+ */
+export async function streamRunEvents(
+  runId: string,
+  after: number,
+  onEvent: (e: AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<number> {
+  const token = getToken()
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/v1/agent-runs/${runId}/events?after=${after}`, {
+      signal,
+      credentials: 'include',
+      headers: { Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return after
+    throw new ApiError(0, 'Unable to reach the PAW service.')
+  }
+  if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    throw toError(res.status, await res.json().catch(() => undefined))
+  }
+  if (!res.body) throw new ApiError(0, 'The response could not be streamed.')
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  let last = after
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let i: number
+      while ((i = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        const data = /^data: (.+)$/m.exec(frame)?.[1]
+        if (!data) continue // keepalive comment
+        const ev = JSON.parse(data) as AgentEvent
+        if (ev.seq <= last) continue // never show an event twice
+        last = ev.seq
+        onEvent(ev)
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return last
+    throw new ApiError(0, 'The event stream was interrupted.')
+  }
+  return last
+}
+
 // ---- readiness (public) ----
 export interface Readiness {
   status: 'ready'
