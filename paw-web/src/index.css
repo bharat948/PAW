@@ -252,9 +252,9 @@ details.opts summary::-webkit-details-marker { display: none; }
 .src .head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .src p { margin: 0; font-size: .86rem; color: var(--muted); overflow-wrap: anywhere; }
 .num { width: 1.4rem; height: 1.4rem; border-radius: 6px; background: var(--surface-2); display: inline-grid; place-items: center; font-size: .74rem; font-weight: 800; }
-.composer { position: sticky; bottom: 0; padding: .75rem 0 1rem; background: linear-gradient(to top, var(--bg) 70%, transparent); }
+.composer { position: sticky; bottom: 0; z-index: 10; padding: .75rem 0 1rem; background: linear-gradient(to top, var(--bg) 70%, transparent); }
 .composer form { display: flex; gap: .6rem; align-items: flex-end; padding: .6rem; border-radius: 18px; box-shadow: var(--shadow); }
-.composer textarea { flex: 1; resize: none; font: inherit; color: var(--fg); background: transparent; border: none; padding: .55rem .6rem; min-height: 2.6rem; max-height: 9rem; outline: none; }
+.composer textarea { flex: 1; min-width: 0; resize: none; font: inherit; color: var(--fg); background: transparent; border: none; padding: .55rem .6rem; min-height: 2.6rem; max-height: 9rem; outline: none; }
 .composer .primary, .composer .stop { min-height: 2.6rem; border-radius: 12px; }
 .prompts { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; margin-top: 1rem; }
 .prompts button { font-weight: 500; border-radius: 999px; }
@@ -285,3 +285,18 @@ details.opts summary::-webkit-details-marker { display: none; }
 .version-list { list-style: none; padding: 0; display: grid; gap: .6rem; }
 .version-list li { display: grid; gap: .35rem; }
 .tool-activity .tool-denied { color: var(--bad); }
+
+/* Durable conversation controls */
+.conversation-list { margin: 1rem 0; padding: .8rem; border: 1px solid var(--border, #ddd); border-radius: .75rem; }
+.conversation-list nav ul { list-style: none; padding: 0; max-height: 13rem; overflow: auto; }
+.conversation-list button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.conversation-list [aria-current="page"] { font-weight: 700; text-decoration: underline; }
+.conversation-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
+.ledger-message { margin: 1rem 0; overflow-wrap: anywhere; }
+.ledger-message pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; }
+.ledger-meta { font-size: .75rem; opacity: .75; margin: .3rem 0; }
+.ledger-message summary { cursor: pointer; }
+.conversation-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1rem; background: #0008; }
+.conversation-modal form { width: min(100%, 36rem); max-height: 90dvh; overflow: auto; background: var(--surface, #fff); padding: 1.5rem; }
+.conversation-modal textarea { display: block; width: 100%; min-height: 5rem; margin: .5rem 0; box-sizing: border-box; }
+@media (max-width: 480px) { .composer { position: relative; bottom: auto; } .conversation-list nav ul { display: grid; border-radius: .5rem; } .conversation-actions button { min-height: 44px; } .conversation-modal { padding: .5rem; } .conversation-modal form { padding: 1rem; } }
