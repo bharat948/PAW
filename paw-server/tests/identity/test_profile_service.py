@@ -173,7 +173,8 @@ def test_a_run_records_its_profile_version_and_sends_the_compiled_instructions(h
     )[0]
     c = compile_profile(svc.ADMIN, 1, DEFAULT_ADMIN_SPEC)
     assert row[0] == 1 and row[1] == c.compiled_hash and row[2] is not None
-    assert harness.rt.created[0]["instructions"] == c.run_instructions
+    assert harness.rt.created[0]["instructions"].startswith(c.run_instructions + "\n\n")
+    assert "Task-oriented history" in harness.rt.created[0]["instructions"]
 
 
 def test_activating_a_new_version_changes_the_next_run_but_never_an_earlier_one(harness, env):

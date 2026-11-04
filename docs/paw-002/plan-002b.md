@@ -1,5 +1,7 @@
 # 002B build plan: the session ledger, context assembly and recovery
 
+Implementation update (2026-11-04): all eight slices are built on `paw-002b-ledger`, including the approved task-checkpoint addition. Recovery, privacy and desktop/phone-width browser gates pass; local 002B acceptance is complete. See [implementation evidence](implementation-002b.md) and [operations](operations-002b.md).
+
 Written 2026-11-04. Decisions: `plan-actor-foundation.md` section 7 (F1 to F4, L1 to L10). Spec: PAW-002 sections 8,
 9, 12.4 and substory 002B (R01 to R06).
 

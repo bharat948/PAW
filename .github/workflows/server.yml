@@ -1,10 +1,10 @@
 name: server-ci
 on:
   pull_request:
-    paths: ['paw-server/**', '.github/workflows/server.yml']
+    paths: ['paw-server/**', 'scripts/backup/**', '.github/workflows/server.yml']
   push:
     branches: [main]
-    paths: ['paw-server/**', '.github/workflows/server.yml']
+    paths: ['paw-server/**', 'scripts/backup/**', '.github/workflows/server.yml']
 permissions:
   contents: read
 concurrency:
@@ -40,5 +40,6 @@ jobs:
       - run: make lint
       - run: make typecheck
       - run: make test
-      - run: uv run pytest -m integration
+      - run: uv run pytest -m "integration and not live and not hermes_real"
+      - run: uv run --with pyrage pytest tests/sessions/test_backup_journal.py -q
       - run: docker build -t paw-server:ci .

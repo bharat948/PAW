@@ -101,8 +101,8 @@ def test_documents_of_another_workspace_are_invisible_to_search_and_fetch(h, env
             "INSERT INTO workspaces (slug, owner_actor_id) VALUES ('elsewhere', 'owner') RETURNING id"
         ).fetchone()[0]
         c.execute(
-            "UPDATE agent_sessions SET workspace_id = %s", (other,)
-        )  # the run now belongs to another workspace
+            "UPDATE documents SET workspace_id = %s", (other,)
+        )  # the documents now belong to another workspace; session roles stay immutable
     g = build(h, env)
     out = g.handle_call("docs_get_source", {"chunk_id": victim_chunk})
     assert out.reason == "TOOL_ERROR" and "No such passage" in out.text

@@ -1,10 +1,10 @@
 name: web-ci
 on:
   pull_request:
-    paths: ['paw-web/**', '.github/workflows/web.yml']
+    paths: ['paw-web/**', 'paw-server/**', '.github/workflows/web.yml']
   push:
     branches: [main]
-    paths: ['paw-web/**', '.github/workflows/web.yml']
+    paths: ['paw-web/**', 'paw-server/**', '.github/workflows/web.yml']
 permissions:
   contents: read
 concurrency:
@@ -34,3 +34,34 @@ jobs:
         env:
           CI: "true"
       - run: docker build -t paw-web:ci .
+
+  ledger-browser:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: paw
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: paw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paw" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      PAW_TEST_DATABASE_URL: postgresql://paw:ci_only@localhost:5432/paw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.10.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: paw-web/.nvmrc
+      - run: uv sync --frozen
+        working-directory: paw-server
+      - run: npm ci
+        working-directory: paw-web
+      - run: npx playwright install --with-deps chromium
+        working-directory: paw-web
+      - run: npm run test:ledger
+        working-directory: paw-web

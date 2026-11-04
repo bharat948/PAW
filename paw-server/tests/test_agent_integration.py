@@ -281,7 +281,7 @@ def test_worker_sends_the_pae_run_id_instructions_and_prior_turns_as_history(h):
     ]
 
 
-def test_failed_and_interrupted_runs_are_not_part_of_the_history(h):
+def test_failed_runs_remain_in_history_with_their_failed_outcome(h):
     s = h.session()
     h.send(s, message="bad turn")
     h.rt.script = lambda hid: [("run.failed", {"error": "boom"})]
@@ -289,7 +289,10 @@ def test_failed_and_interrupted_runs_are_not_part_of_the_history(h):
     h.send(s, message="next")
     h.rt.script = lambda hid: [completed("ok")]
     h.worker.run_once()
-    assert h.rt.created[1]["history"] == []
+    assert h.rt.created[1]["history"] == [
+        {"role": "user", "content": "bad turn"},
+        {"role": "assistant", "content": "Run ended: failed."},
+    ]
 
 
 def test_runtime_reported_failure_is_failed(h):
@@ -432,7 +435,7 @@ def test_restart_recovery_interrupts_orphaned_runs_and_keeps_partial_output(h, e
     assert (r["state"], r["output"], r["error_code"]) == (
         "INTERRUPTED",
         "partial",
-        "worker_restart",
+        "runtime_missing",
     )
     assert sql(env, "SELECT count(*) FROM agent_run_leases") == [(0,)]
     assert h.worker.recover() == 0

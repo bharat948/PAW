@@ -31,6 +31,8 @@ function api(handlers: Handler[]) {
   return calls
 }
 const base: Handler = (url) => {
+  if (url.endsWith('/v1/agent-sessions')) return Response.json({ sessions: [] })
+  if (url.includes('/messages?')) return Response.json({ messages: [], next_after: null, summaries: [], children: [], summary_job: null })
   if (url.includes('/v1/auth/config')) return Response.json({ mode: 'google', google: true })
   if (url.includes('/v1/auth/me')) return Response.json(session)
   if (url.includes('/v1/runtime/health')) return Response.json({ configured: true, ready: true, missing: [] })

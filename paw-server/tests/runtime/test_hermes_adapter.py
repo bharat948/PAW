@@ -147,6 +147,13 @@ def test_create_rejects_non_json_responses():
 # ---- stream_events ----------------------------------------------------------------------------------------------
 
 
+def test_queued_runtime_run_is_known_and_can_be_recovered():
+    a = adapter(lambda r: httpx.Response(200, json={"run_id": "R", "status": "queued"}))
+    snapshot = a.get_run("R")
+    assert snapshot.status == "queued"
+    assert not snapshot.terminal
+
+
 def test_stream_yields_ordered_events_and_stops_at_the_terminal_event():
     a = adapter(lambda r: sse(delta(0, "a"), delta(1, "b"), done(2), delta(3, "after terminal")))
     evs = list(a.stream_events("R"))

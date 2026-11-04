@@ -1,6 +1,6 @@
 # Plan: finishing Story 2, and what comes after
 
-Written 2026-11-04 for Bharat. Status: proposed. Everything below is on `main` (58ca03f) unless it says "not built".
+Updated 2026-11-04 for Bharat. 002B is implemented on `paw-002b-ledger`, with local 002B acceptance complete. [Coverage and evidence](implementation-002b.md). Other phase descriptions below retain their earlier baseline unless updated.
 
 ## 0. Where we are
 
@@ -8,6 +8,7 @@ Written 2026-11-04 for Bharat. Status: proposed. Everything below is on `main` (
 |---|---|---|
 | S0 spike, ADRs | done | `s0-findings.md`, ADR-201 to 204 accepted |
 | 002A runtime bridge | steps 1 to 7 of 9 | chat works end to end against the real Hermès; cancel, stop deadline, restart recovery |
+| 002B durable conversations | implemented; local 002B acceptance complete | task-aware compaction, PostgreSQL context, recovery, privacy and browser gates; `implementation-002b.md` |
 | 002C identity | done | Profile page, versions, compiler, per-run profile binding |
 | 002D gateway | PRs 1 to 8, home compose missing | real tools (docs, calendar, status), audit, attestation, fail closed; verified on the real container |
 | Calendar connector + Integrations page | built, **never run against real Google** | needs your click-through |
@@ -16,7 +17,7 @@ Written 2026-11-04 for Bharat. Status: proposed. Everything below is on `main` (
 | Tests | server 740 passed, web 60 passed | opt-in real-container tests also pass |
 
 Spec milestones:
-- **M1 (first governed loop)** = S0 + 002A to 002D. We have most of it. Missing: the "destroy both containers, wipe Hermès state, the conversation continues" test (needs the 002B ledger work), cost limits, the home topology, and the phone demo over HTTPS.
+- **M1 (first governed loop)** = S0 + 002A to 002D. We have most of it. The 002B cold-restart gate now passes. Remaining: cost limits, the home topology, and the hosted phone demo over HTTPS.
 - **M2 (Story 2 release)** = 002E to 002H: memory, approvals, GitHub, evaluation. None started.
 
 ## 1. What is left in Story 2, in three tracks
@@ -31,10 +32,8 @@ Spec milestones:
 - Visible: a cost line per run in the chat and a daily total; a run stops with a clear reason when the cap is hit.
 
 **A2. 002B: the session ledger, rehydration and recovery**
-- Today the history for a new run is rebuilt from earlier completed runs. 002B replaces that with a proper ledger: every message, tool result and event is an append-only row, the assembler renders history deterministically (same input, same bytes), long sessions are summarised, and tool results are stubbed in old history.
-- The reconciler at worker start handles every half-finished state.
-- The acceptance test T205: recreate both containers with Hermès state wiped, and the next answer still uses facts from earlier turns. We have seen this work informally; this makes it a gate.
-- Also fork-a-conversation and delete/purge.
+- Implemented, including task-checkpoint compaction with a size fallback. Recovery, privacy and local browser acceptance pass. Local 002B acceptance is complete.
+- See [requirement coverage and tests](implementation-002b.md) and [operations](operations-002b.md). Hosted phone acceptance remains A4 after deployment.
 
 **A3. Home topology (rest of 002A step 9, 002D PR 8)**
 - Add Hermès, the gateway and the agent worker to the home compose, on a private network with no published ports.
