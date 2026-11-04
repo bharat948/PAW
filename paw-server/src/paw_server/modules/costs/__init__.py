@@ -1,0 +1,1 @@
+"""Durable actor spending authorization."""
