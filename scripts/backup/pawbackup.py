@@ -62,7 +62,14 @@ def read_env_file(path: str) -> dict[str, str]:
 
 
 def dc(*args: str, project: str | None = None) -> list[str]:
-    cmd = ["docker", "compose", "--env-file", need("PAW_HOME_ENV"), "-f", str(COMPOSE_FILE)]
+    cmd = [
+        "docker",
+        "compose",
+        "--env-file",
+        need("PAW_HOME_ENV"),
+        "-f",
+        str(COMPOSE_FILE),
+    ]
     if project:
         cmd += ["-p", project]
     return cmd + list(args)
@@ -74,7 +81,19 @@ def sh(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 def psql(sql: str, project: str | None = None) -> str:
     r = sh(
-        dc("exec", "-T", "db", "psql", "-U", "paw", "-d", "paw", "-tAc", sql, project=project),
+        dc(
+            "exec",
+            "-T",
+            "db",
+            "psql",
+            "-U",
+            "paw",
+            "-d",
+            "paw",
+            "-tAc",
+            sql,
+            project=project,
+        ),
         capture_output=True,
         text=True,
     )
@@ -109,6 +128,96 @@ def dest():
     except EndpointConnectionError:
         sys.exit("FAILED: backup destination unreachable; nothing was changed")
     return c, bucket
+
+
+def local_journal():
+    from paw_server.modules.sessions.journal import Journal
+
+    return Journal(os.environ.get("PAW_DELETION_JOURNAL_DIR", ""))
+
+
+def cmd_export_deletions(a) -> None:
+    journal = local_journal()
+    with journal.guard():
+        payload = journal.export()
+    target = Path(a.output)
+    fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(payload, f)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def cmd_sync_deletions(a) -> None:
+    """Independent encrypted snapshots; pruning DB backups never removes deletion receipts."""
+    while True:
+        try:
+            journal = local_journal()
+            with journal.guard(synchronization=True):
+                with journal.guard():
+                    payload = journal.export()
+                envf = read_env_file(need("PAW_HOME_ENV"))
+                installation = envf.get("PAW_INSTALLATION_ID")
+                if not installation:
+                    sys.exit("PAW_INSTALLATION_ID is required for deletion journal sync")
+                payload["installation_id"] = installation
+                plain = json.dumps(payload, sort_keys=True).encode()
+                recipient = pyrage.x25519.Recipient.from_str(need("PAW_BACKUP_AGE_RECIPIENT"))
+                encrypted = pyrage.encrypt(plain, [recipient])
+                digest = hashlib.sha256(encrypted).hexdigest()
+                c, bucket = dest()
+                prefix = f"privacy/{installation}/"
+                key = prefix + digest + ".json.age"
+                c.put_object(Bucket=bucket, Key=key, Body=encrypted)
+                actual = c.get_object(Bucket=bucket, Key=key)["Body"].read()
+                if hashlib.sha256(actual).hexdigest() != digest:
+                    raise ValueError("journal_upload_hash_mismatch")
+                manifest = {
+                    "version": 1,
+                    "key": key,
+                    "sha256": digest,
+                    "synced_through": payload["synced_through"],
+                    "receipts": len(payload["receipts"]),
+                    "installation_id": installation,
+                }
+                c.put_object(
+                    Bucket=bucket,
+                    Key=prefix + "latest.json",
+                    Body=json.dumps(manifest).encode(),
+                )
+                status = journal.path / "sync-status.json"
+                tmp = status.with_suffix(".tmp")
+                tmp.write_text(json.dumps(manifest))
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, status)
+                print(
+                    f"Deletion journal synchronized: {len(payload['receipts'])} receipts; through {payload['synced_through']}"
+                )
+        except (Exception, SystemExit):
+            if not getattr(a, "watch", False):
+                raise
+            print("Deletion journal sync failed; retrying in 60 seconds", file=sys.stderr)
+        if not getattr(a, "watch", False):
+            return
+        time.sleep(60)
+
+
+def read_deletion_journal(path: str, identity_path: str) -> dict:
+    """The supplied journal is intentionally independent of the chosen database backup."""
+    from paw_server.modules.sessions.journal import Receipt
+
+    raw = Path(path).read_bytes()
+    if path.endswith(".age"):
+        ident = pyrage.x25519.Identity.from_str(
+            Path(identity_path).read_text().strip().splitlines()[-1]
+        )
+        raw = pyrage.decrypt(raw, [ident])
+    payload = json.loads(raw)
+    if payload.get("version") != 1 or not isinstance(payload.get("receipts"), list):
+        sys.exit("FAILED: invalid deletion journal")
+    for row in payload["receipts"]:
+        Receipt.model_validate(row)
+    return payload
 
 
 def staging_root() -> Path:
@@ -253,6 +362,7 @@ def cmd_run(_a) -> None:
         f"COMPLETE {bid}: {meta['documents']} documents, {len(objs)} objects, "
         f"{blob_size} bytes encrypted, {time.time() - started:.1f}s"
     )
+    cmd_sync_deletions(argparse.Namespace(watch=False))
     cmd_prune(_a)
 
 
@@ -355,6 +465,7 @@ def volumes_for(project: str) -> tuple[str, str]:
 
 def cmd_restore(a, teardown: bool = False) -> None:
     started = time.time()
+    privacy_journal = read_deletion_journal(a.deletion_journal, a.identity)
     project = a.target_project
     if project in ("paw-home", ""):
         sys.exit("refusing: restore target must not be the live project 'paw-home'")
@@ -366,6 +477,11 @@ def cmd_restore(a, teardown: bool = False) -> None:
     with tempfile.TemporaryDirectory(dir=staging_root()) as w:
         work = Path(w)
         m = fetch_and_validate(a.backup_id, a.identity, work)  # nothing created yet if this fails
+        if (
+            privacy_journal.get("installation_id")
+            and privacy_journal["installation_id"] != m["installation_id"]
+        ):
+            sys.exit("FAILED: deletion journal belongs to another installation")
         for v in (pg_vol, s3_vol):
             sh(["docker", "volume", "create", v], stdout=subprocess.DEVNULL)
         try:
@@ -387,13 +503,44 @@ def cmd_restore(a, teardown: bool = False) -> None:
                     ),
                     stdin=f,
                 )
+            restored_revision = psql("select version_num from alembic_version", project)
+            assert restored_revision == m["alembic_revision"], (
+                "restored migration differs from backup"
+            )
+            sh(
+                dc(
+                    "run",
+                    "--rm",
+                    "--no-deps",
+                    "api",
+                    "alembic",
+                    "-c",
+                    "alembic.ini",
+                    "upgrade",
+                    "head",
+                    project=project,
+                )
+            )
+            sh(
+                dc(
+                    "run",
+                    "--rm",
+                    "--no-deps",
+                    "api",
+                    "python",
+                    "-m",
+                    "paw_server.session_restore",
+                    project=project,
+                ),
+                input=json.dumps(privacy_journal).encode(),
+            )
             os.chmod(work, 0o755)
             os.chmod(work / "set", 0o755)
             objects_io("import", work / "set" / "objects", project, rw=False)
             objects_io("check", work / "set" / "objects", project, rw=False)
             rev = psql("select version_num from alembic_version", project)
             docs = int(psql("select count(*) from documents", project))
-            assert rev == m["alembic_revision"], f"alembic {rev} != {m['alembic_revision']}"
+            # The restored database is deliberately migrated before deletion replay.
             assert docs == m["documents"], f"documents {docs} != {m['documents']}"
             print(
                 f"RESTORED into project '{project}' (NOT live): rev {rev}, {docs} documents, "
@@ -406,7 +553,8 @@ def cmd_restore(a, teardown: bool = False) -> None:
             if teardown:
                 subprocess.run(dc("down", project=project), cwd=ROOT)
                 subprocess.run(
-                    ["docker", "volume", "rm", pg_vol, s3_vol], stdout=subprocess.DEVNULL
+                    ["docker", "volume", "rm", pg_vol, s3_vol],
+                    stdout=subprocess.DEVNULL,
                 )
                 print("target removed")
 
@@ -418,13 +566,33 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     for n in ("keygen", "run", "list", "prune"):
         sub.add_parser(n).set_defaults(
-            fn={"keygen": cmd_keygen, "run": cmd_run, "list": cmd_list, "prune": cmd_prune}[n]
+            fn={
+                "keygen": cmd_keygen,
+                "run": cmd_run,
+                "list": cmd_list,
+                "prune": cmd_prune,
+            }[n]
         )
+    export = sub.add_parser("export-deletions")
+    export.add_argument("--output", required=True)
+    export.set_defaults(fn=cmd_export_deletions)
+    sync = sub.add_parser("sync-deletions")
+    sync.add_argument(
+        "--watch",
+        action="store_true",
+        help="retry every 60 seconds independently of database backups",
+    )
+    sync.set_defaults(fn=cmd_sync_deletions)
     for n, td in (("restore", False), ("drill", True)):
         q = sub.add_parser(n)
         q.add_argument("backup_id")
         q.add_argument("--identity", required=True, help="file with the PRIVATE age identity")
         q.add_argument("--target-project", default="paw-restore")
+        q.add_argument(
+            "--deletion-journal",
+            required=True,
+            help="current independent journal export (JSON or encrypted .age); never inferred from the old backup",
+        )
         q.set_defaults(fn=(lambda a, td=td: cmd_restore(a, teardown=td)))
     a = p.parse_args()
     a.fn(a)

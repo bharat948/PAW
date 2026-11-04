@@ -54,6 +54,10 @@ start_hermes
 
 (cd paw-server && make run 2>&1 | prefix api) & pids+=($!)
 (cd paw-server && make worker 2>&1 | prefix worker) & pids+=($!)
+(cd paw-server && make session-worker 2>&1 | prefix sessions) & pids+=($!)
+if [[ -n "${PAW_BACKUP_AGE_RECIPIENT:-}" && -n "${PAW_HOME_ENV:-}" ]]; then
+  (uv run --project paw-server --with pyrage python scripts/backup/pawbackup.py sync-deletions --watch 2>&1 | prefix privacy-sync) & pids+=($!)
+fi
 if [[ -n "${PAW_HERMES_URL:-}" ]]; then (cd paw-server && make agent-worker 2>&1 | prefix agent) & pids+=($!); fi
 (cd paw-web && npm run dev 2>&1 | prefix web) & pids+=($!)
 echo "web http://localhost:5173  |  api http://localhost:8000/docs  |  token in paw-server/.env (PAW_OWNER_TOKEN)"
