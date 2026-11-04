@@ -2,6 +2,7 @@
 anyone can read it. A run ends SUCCEEDED only when the runtime's terminal completion event was received."""
 
 import logging
+import time
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +12,8 @@ from paw_server.core.config import Settings
 from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
 from paw_server.modules.runtime.protocol import AgentRuntime, RuntimeError_, RuntimeEvent
+from paw_server.modules.sessions import assembler, checkpoints, privacy
+from paw_server.modules.sessions.journal import Journal
 
 log = logging.getLogger("paw.agent")
 
@@ -32,13 +35,71 @@ class AgentWorker:
         self, pool: ConnectionPool[Any], runtime: AgentRuntime, settings: Settings
     ) -> None:
         self.pool, self.runtime, self.settings = pool, runtime, settings
+        self._filters: dict[UUID, checkpoints.CheckpointStream] = {}
         with pool.connection() as conn:
+            privacy.replay(conn, Journal(settings.deletion_journal_dir))
             self.runtime_id = lc.ensure_runtime(conn)
             identity.ensure_default_profile(conn)
 
     def recover(self) -> int:
         with self.pool.connection() as conn:
-            return lc.recover_interrupted(conn)
+            runs = conn.execute(
+                "SELECT * FROM agent_runs WHERE runtime_id = %s AND state IN "
+                "('DISPATCHING','RUNNING','CANCELLING') ORDER BY queued_at, id",
+                (self.runtime_id,),
+            ).fetchall()
+            conn.commit()
+        for run in runs:
+            rid, hid = run["id"], run["hermes_run_id"]
+            if not hid:
+                self._end(rid, "INTERRUPTED", error_code="dispatch_unknown")
+                continue
+            stream = checkpoints.CheckpointStream()
+            with self.pool.connection() as conn:
+                rows = conn.execute(
+                    "SELECT payload, source_event_id FROM agent_run_events WHERE run_id = %s ORDER BY seq",
+                    (rid,),
+                ).fetchall()
+                conn.commit()
+            after = -1
+            for row in rows:
+                source = row["source_event_id"] or ""
+                if source.startswith(hid + ":") and source.rsplit(":", 1)[-1].isdigit():
+                    after = max(after, int(source.rsplit(":", 1)[-1]))
+                if "raw" in row["payload"]:
+                    stream.feed(row["payload"]["raw"])
+            self._filters[rid] = stream
+            deadline = time.monotonic() + self.settings.agent_recovery_deadline_s
+            while True:
+                try:
+                    snapshot = self.runtime.get_run(hid)
+                    if snapshot.status == "unknown":
+                        self._end(rid, "INTERRUPTED", error_code="runtime_unknown")
+                        break
+                    if run["state"] == "DISPATCHING":
+                        with self.pool.connection() as conn:
+                            lc.move(conn, rid, "RUNNING", hermes_run_id=hid)
+                    if run["state"] == "CANCELLING" and not snapshot.terminal:
+                        self.runtime.stop_run(hid)
+                    ended = False
+                    for ev in self.runtime.stream_events(hid, after_seq=after):
+                        if self._store(rid, ev):
+                            ended = True
+                            break
+                    if not ended:
+                        self._end(rid, "INTERRUPTED", error_code="no_terminal_event")
+                    break
+                except RuntimeError_ as exc:
+                    if exc.retryable and time.monotonic() < deadline:
+                        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+                        continue
+                    self._end(
+                        rid,
+                        "INTERRUPTED",
+                        error_code="runtime_missing" if exc.code == "not_found" else exc.code,
+                    )
+                    break
+        return len(runs)
 
     def reap(self) -> int:
         """End runs whose stop was never confirmed. Safe to call from another thread while a run is processed."""
@@ -48,6 +109,7 @@ class AgentWorker:
     def run_once(self) -> bool:
         """Claim and fully process one run. False when there was nothing to do."""
         with self.pool.connection() as conn:
+            privacy.replay(conn, Journal(self.settings.deletion_journal_dir))
             run = lc.claim_next(conn, self.runtime_id)
         if run is None:
             return False
@@ -72,6 +134,7 @@ class AgentWorker:
             if "output" not in fields and state in ("INTERRUPTED", "FAILED"):
                 fields["output"] = lc.partial_output(conn, run_id)
             lc.finish(conn, run_id, state, **kw, **fields)
+        self._filters.pop(run_id, None)
 
     def _process(self, run: dict[str, Any]) -> None:
         run_id: UUID = run["id"]
@@ -89,14 +152,35 @@ class AgentWorker:
                 conn, run_id, profile_version_id=profile.version_id, version=profile.version,
                 compiled_hash=profile.compiled.compiled_hash,
             )  # fmt: skip
-            history = lc.history_for(conn, run["session_id"], run_id)
-        try:
-            handle = self.runtime.create_run(
-                run_id=str(run_id),
-                input=run["user_message"],
+            assembly = assembler.assemble(
+                conn,
+                run["session_id"],
+                run_id,
                 instructions=profile.compiled.run_instructions,
-                history=history,
+                profile_hash=profile.compiled.compiled_hash,
+                history_budget=self.settings.agent_history_tokens,
+                tool_budget=self.settings.agent_tool_history_tokens,
+                summary_budget=self.settings.agent_summary_tokens,
             )
+            conn.commit()
+        try:
+            # Serialize the final privacy check and dispatch with durable deletion requests.
+            journal = Journal(self.settings.deletion_journal_dir)
+            with journal.guard(), self.pool.connection() as conn:
+                for receipt in journal.receipts():
+                    privacy.apply(conn, receipt)
+                conn.commit()
+                valid = assembler.valid(conn, assembly.meta)
+                conn.commit()
+                if not valid:
+                    self._end(run_id, "INTERRUPTED", error_code="context_changed")
+                    return
+                handle = self.runtime.create_run(
+                    run_id=str(run_id),
+                    input=assembly.input,
+                    instructions=assembly.instructions,
+                    history=assembly.history,
+                )
         except RuntimeError_ as exc:
             # A timeout or outage may mean the request landed: we cannot know, so never call it a clean failure.
             unknown = exc.code in ("unavailable", "timeout")
@@ -111,6 +195,14 @@ class AgentWorker:
             if not lc.move(conn, run_id, "RUNNING", hermes_run_id=handle.hermes_run_id):
                 self._end(run_id, "INTERRUPTED", error_code="bad_state")
                 return
+        with self.pool.connection() as conn:
+            redacted = conn.execute(
+                "SELECT 1 FROM agent_run_redactions WHERE run_id=%s", (run_id,)
+            ).fetchone()
+            conn.commit()
+            if redacted:
+                lc.request_cancel(conn, run_id)
+                self.runtime.stop_run(handle.hermes_run_id)
         try:
             for ev in self.runtime.stream_events(handle.hermes_run_id):
                 if self._store(run_id, ev):
@@ -128,7 +220,22 @@ class AgentWorker:
                 # ended elsewhere (stop deadline): nothing may follow a terminal event
                 if lc.is_terminal(conn, run_id):
                     return True
-                lc.append_event(conn, run_id, ev.type, ev.payload, ev.source_event_id)
+                redacted = conn.execute(
+                    "SELECT 1 FROM agent_run_redactions WHERE run_id=%s", (run_id,)
+                ).fetchone()
+                conn.commit()
+                payload = dict(ev.payload)
+                if ev.type == "message.delta":
+                    raw = str(payload.get("text", ""))
+                    payload = {
+                        "text": self._filters.setdefault(
+                            run_id, checkpoints.CheckpointStream()
+                        ).feed(raw),
+                        "raw": raw,
+                    }
+                if redacted:
+                    payload = {"redacted": True}
+                lc.append_event(conn, run_id, ev.type, payload, ev.source_event_id)
                 lc.heartbeat(conn, run_id)
             return False
         to = lc.STATE_FOR_TERMINAL_EVENT[ev.type]
@@ -145,4 +252,5 @@ class AgentWorker:
                 conn, run_id, to, event_type=ev.type, payload=ev.payload,
                 source_event_id=ev.source_event_id, **fields,
             )  # fmt: skip
+        self._filters.pop(run_id, None)
         return True
