@@ -15,6 +15,7 @@ This guards against bugs in normal code paths. It is not a defence against someo
 """
 
 import json
+from typing import Any
 
 from alembic import op
 
@@ -350,7 +351,9 @@ def upgrade() -> None:
             queued_at,
             finished_at,
         ) = r
-        rows = [("user", requester, message, "complete", queued_at, None, {})]
+        rows: list[tuple[Any, ...]] = [
+            ("user", requester, message, "complete", queued_at, None, {})
+        ]
         calls = conn.exec_driver_sql(
             "SELECT id, tool, args_redacted, decision, reason_code, created_at "
             "FROM gateway_tool_invocations WHERE run_id = %(r)s ORDER BY created_at, id",
