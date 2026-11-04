@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     # Admin Hermes runtime (PAW-002). Empty url or key = the agent endpoints answer 503 agent_unavailable.
     hermes_url: str = ""
     hermes_key: str = ""
+    agent_history_tokens: int = Field(default=24000, ge=256, le=100000)
+    agent_tool_history_tokens: int = Field(default=2000, ge=64, le=8000)
+    agent_summary_tokens: int = Field(default=1200, ge=128, le=8000)
+    agent_summary_model: str = "gpt-4o-mini"
+    agent_recovery_deadline_s: float = Field(default=30, ge=0, le=300)
+    deletion_journal_dir: str = (
+        ""  # empty resolves to XDG state; outside both DB and Hermes volumes
+    )
     agent_queue_limit: int = Field(default=5, ge=1, le=100)  # queued runs across all sessions
     # MCP gateway (PAW-002D): the only tool surface Hermes has. Internal listener, static bearer for the runtime.
     gateway_token: str = ""
