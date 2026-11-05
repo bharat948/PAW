@@ -158,6 +158,18 @@ def test_a_call_is_priced_before_it_is_sent_and_settles_from_provider_usage(h, p
     assert Decimal(s["confirmed_usd"]) > 0 and s["served_model"] == "gpt-4o-mini-2024-07-18"
 
 
+def test_fields_the_pinned_runtime_sends_but_that_do_not_change_price_are_dropped_not_forwarded(
+    h, provider
+):
+    run = start_run(h)["id"]
+    status, _, _ = call(
+        make_proxy(h, provider), run, body(name="paw-hermes", reasoning_effort="medium")
+    )
+    assert status == 200
+    sent = json.loads(provider.requests[0].content)
+    assert "name" not in sent and "reasoning_effort" not in sent and sent["model"] == "gpt-4o-mini"
+
+
 def test_a_stream_settles_from_the_final_usage_frame(h, provider):
     run = start_run(h)["id"]
     status, ctype, out = call(make_proxy(h, provider), run, body(stream=True))

@@ -37,6 +37,9 @@ ALLOWED_FIELDS = frozenset(
         "frequency_penalty", "logit_bias", "response_format", "user", "n",
     }
 )  # fmt: skip
+# Sent by the pinned Hermes runtime (verified in the pinned-runtime contract). They do not change what a call can cost,
+# and a non-reasoning model rejects them, so they are accepted and removed rather than forwarded.
+DROPPED_FIELDS = frozenset({"name", "reasoning_effort"})
 DENIALS: dict[str, tuple[int, str, str]] = {
     "identity_missing": (403, "permission_error", "No valid run identity on this request."),
     "run_not_active": (403, "permission_error", "This run cannot make model calls."),
@@ -110,11 +113,18 @@ class ModelProxy:
 
     def _shape(self, body: dict[str, Any], rate: Rate) -> tuple[dict[str, Any], int, bool]:
         """The request we will actually send, its output bound, and whether it streams."""
-        if (
-            set(body) - ALLOWED_FIELDS or body.get("n", 1) != 1
-        ):  # n > 1 would multiply the output bill
+        refused = set(body) - ALLOWED_FIELDS - DROPPED_FIELDS
+        if refused or body.get("n", 1) != 1:  # n > 1 would multiply the output bill
+            # Field names only (never values), so an operator can see what a runtime sends that was not priced.
+            log.warning(
+                "model proxy refused a payload",
+                extra={
+                    "fields": sorted(str(k)[:40] for k in refused)[:20],
+                    "n_not_one": "n" in body,
+                },
+            )
             raise ProxyDenied("unsupported_payload")
-        out = dict(body)
+        out = {k: v for k, v in body.items() if k not in DROPPED_FIELDS}
         stream = out.get("stream", False)
         if not isinstance(stream, bool):
             raise ProxyDenied("unsupported_payload")

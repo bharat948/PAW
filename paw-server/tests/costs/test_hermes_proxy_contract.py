@@ -23,6 +23,7 @@ pytestmark = pytest.mark.skipif(
 def test_pinned_runtime_proxy_contract(tmp_path):
     key = "test-only-proxy-key-" + uuid4().hex
     calls = []
+    seen_fields = set()
     forwarded = []
     allowed = set()
 
@@ -34,6 +35,7 @@ def test_pinned_runtime_proxy_contract(tmp_path):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             identity = self.headers.get("X-PAW-Run-ID")
             calls.append((identity, body))
+            seen_fields.update(body)
             if self.headers.get("Authorization") != f"Bearer {key}" or identity not in allowed:
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
@@ -186,6 +188,11 @@ def test_pinned_runtime_proxy_contract(tmp_path):
                     assert len(forwarded) > before
                 else:
                     assert len(forwarded) == before
+        # What the pinned runtime really sends must fit the proxy's allow-list, or no run could ever spend.
+        from paw_server.modules.costs.proxy import ALLOWED_FIELDS, DROPPED_FIELDS
+
+        unknown = seen_fields - ALLOWED_FIELDS - DROPPED_FIELDS
+        assert unknown == set(), sorted(unknown)
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
         server.shutdown()
