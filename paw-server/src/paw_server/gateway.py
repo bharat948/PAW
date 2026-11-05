@@ -12,6 +12,7 @@ from paw_server.modules.connectors.calendar_service import CalendarService
 from paw_server.modules.connectors.google_calendar import GoogleCalendarProvider
 from paw_server.modules.costs import tokens
 from paw_server.modules.costs.proxy import ModelProxy
+from paw_server.modules.costs.readiness import enforcement_problems
 from paw_server.modules.gateway.builtin import builtin_registry
 from paw_server.modules.gateway.registry import sync_registry
 from paw_server.modules.gateway.server import build_app
@@ -60,7 +61,14 @@ def main() -> None:
             log.exception("token encodings unavailable; refusing to start the model proxy")
             raise SystemExit(2) from None
         proxy = ModelProxy(pool, settings)
-    app = build_app(service, registry, settings.gateway_token, proxy, settings.model_proxy_token)
+    app = build_app(
+        service,
+        registry,
+        settings.gateway_token,
+        proxy,
+        settings.model_proxy_token,
+        (lambda: enforcement_problems(pool, settings)) if proxy else None,
+    )
     log.info(
         "gateway listening", extra={"host": settings.gateway_host, "port": settings.gateway_port}
     )

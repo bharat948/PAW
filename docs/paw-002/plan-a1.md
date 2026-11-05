@@ -27,3 +27,7 @@ Each task is a separate reviewable commit. Runtime compatibility failure blocks 
 ## Acceptance
 
 Denied requests produce zero provider calls even without tools. Concurrency cannot overspend a shared reservation balance. Test retries, duplicate settlement, interrupted streams, missing usage, midnight and cross-midnight requests, crash/restart, summaries discarded after privacy changes, unknown rates and stale run identity. Verify no request bodies or credentials in logs. Readiness fails if configured enforcement is unavailable. Rollout drains active runs before replacing runtime configuration; no fail-open fallback.
+
+## Status
+
+A1-01 to A1-11 are implemented on `paw-002a-cost-limits`, one commit each. Operating guidance, readiness and the acceptance map are in [operations-a1.md](operations-a1.md). Not covered here: the real-provider click-through, outbound network enforcement and the home topology, which remain later work.

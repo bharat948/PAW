@@ -8,7 +8,7 @@ The pinned actor profile asks for a structured private task checkpoint at the en
 
 Defaults are 24,000 recent-history tokens, 1,200 summary tokens and 2,000 tokens before a tool result becomes a reference stub. Set `PAW_AGENT_HISTORY_TOKENS`, `PAW_AGENT_SUMMARY_TOKENS` and `PAW_AGENT_TOOL_HISTORY_TOKENS` for smaller models. The deterministic estimator and assembler are versioned. Run metadata records the selected messages, profile, revisions, summary reference and assembly hash.
 
-Summaries use the server's existing LLM endpoint/key configuration with `PAW_AGENT_SUMMARY_MODEL=gpt-4o-mini` by default. The maintenance worker records the actual model and usage, retries transient failures, and rejects stale results. Unconfigured providers or exhausted retries produce visible summary failures while recent history remains available. Monetary enforcement belongs to the cost phase.
+Summaries use the server's existing LLM endpoint/key configuration with `PAW_AGENT_SUMMARY_MODEL=gpt-4o-mini` by default. The maintenance worker records the actual model and usage, retries transient failures, and rejects stale results. Unconfigured providers or exhausted retries produce visible summary failures while recent history remains available. Summaries are budgeted like run calls; see [operations-a1.md](operations-a1.md).
 
 ## Deletion journal and backups
 
@@ -39,4 +39,4 @@ Worker startup reconciles known runtime IDs before claiming queued work. It resu
 
 Focused tests use disposable PostgreSQL databases. `PAW_LEDGER_REAL=1` opts into `tests/sessions/test_container_recovery.py`, using fresh `paw-002b-test-*` containers and previously authorized S0 credentials. No volumes are mounted. Never run destructive container tests against the owner runtime. Browser acceptance uses `npm run test:ledger` with `PAW_TEST_DATABASE_URL` and starts its own API/database on ports 18002/15174.
 
-Home deployment, public HTTPS/phone acceptance, egress enforcement, monetary limits, actor creation, memory, approvals and GitHub remain subsequent phases.
+Home deployment, public HTTPS/phone acceptance, egress enforcement, actor creation, memory, approvals and GitHub remain subsequent phases. Cost controls are in [operations-a1.md](operations-a1.md).

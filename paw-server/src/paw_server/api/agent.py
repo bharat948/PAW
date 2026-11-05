@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from paw_server.api.deps import CurrentActor
 from paw_server.core.errors import ApiError
 from paw_server.modules.costs import service as costs
+from paw_server.modules.costs.readiness import gateway_enforcement
 from paw_server.modules.gateway import attestation
 from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
@@ -96,6 +97,10 @@ def runtime_health(request: Request, actor: CurrentActor) -> dict[str, Any]:
             "config": "unknown",
         }
     missing = rt.missing_capabilities()
+    if (
+        st.settings.model_proxy_token
+    ):  # enforcement is configured, so it must be working for the runtime to be ready
+        missing = missing + ["enforcement_" + p for p in gateway_enforcement(st.settings)]
     with st.pool.connection() as conn:
         identity.ensure_default_profile(conn)
         active = identity.get_active(conn, identity.ADMIN)

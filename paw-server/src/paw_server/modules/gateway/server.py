@@ -3,6 +3,7 @@ all policy lives there. Requests without the runtime's bearer token get 401 befo
 
 import hmac
 import json
+from collections.abc import Callable
 from typing import Any
 
 import anyio
@@ -72,6 +73,7 @@ def build_app(
     token: str,
     proxy: ModelProxy | None = None,
     proxy_token: str = "",
+    enforcement: Callable[[], list[str]] | None = None,
 ) -> Any:
     """ASGI app: bearer check in front of the MCP streamable-HTTP app. `host="0.0.0.0"` only switches off the SDK's
     localhost Host-header allow-list (Hermes reaches us as host.docker.internal); the bearer token and the listener's
@@ -110,6 +112,16 @@ def build_app(
         if scope["type"] == "http":
             if scope["path"] == "/_health":
                 return await _respond(send, 200, {"ok": True})
+            if scope["path"] == "/_ready":
+                # Unauthenticated like /_health, so it names failing checks only. No enforcement hook = not enforcing.
+                problems = (
+                    ["model_proxy_not_configured"]
+                    if enforcement is None
+                    else await anyio.to_thread.run_sync(enforcement)
+                )
+                return await _respond(
+                    send, 200 if not problems else 503, {"ok": not problems, "problems": problems}
+                )
             given = dict(scope["headers"]).get(b"authorization", b"")
             if scope["path"].startswith("/v1/"):
                 # The model route has its own credential: the gateway token cannot spend, and this one cannot call tools.
