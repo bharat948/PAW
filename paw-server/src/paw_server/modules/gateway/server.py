@@ -9,6 +9,7 @@ import anyio
 import mcp.types as t
 from mcp.server import Server, ServerRequestContext
 
+from paw_server.modules.costs.proxy import ModelProxy
 from paw_server.modules.gateway.attestation import ReportError
 from paw_server.modules.gateway.registry import ToolRegistry
 from paw_server.modules.gateway.service import GatewayService
@@ -65,13 +66,24 @@ async def _respond(send: Any, status: int, body: object) -> None:
     await send({"type": "http.response.body", "body": data})
 
 
-def build_app(service: GatewayService, registry: ToolRegistry, token: str) -> Any:
+def build_app(
+    service: GatewayService,
+    registry: ToolRegistry,
+    token: str,
+    proxy: ModelProxy | None = None,
+    proxy_token: str = "",
+) -> Any:
     """ASGI app: bearer check in front of the MCP streamable-HTTP app. `host="0.0.0.0"` only switches off the SDK's
     localhost Host-header allow-list (Hermes reaches us as host.docker.internal); the bearer token and the listener's
     network placement are the access control."""
     if len(token) < 24:
         raise ValueError("PAW_GATEWAY_TOKEN must be at least 24 characters")
     expected = f"Bearer {token}".encode()
+    if proxy is not None and (len(proxy_token) < 24 or proxy_token == token):
+        raise ValueError(
+            "the model proxy token must be at least 24 characters and differ from the gateway token"
+        )
+    proxy_expected = f"Bearer {proxy_token}".encode()
     inner = build_mcp_server(service, registry).streamable_http_app(host="0.0.0.0")
 
     async def read_body(receive: Any, limit: int = 16 * 1024) -> bytes | None:
@@ -99,6 +111,15 @@ def build_app(service: GatewayService, registry: ToolRegistry, token: str) -> An
             if scope["path"] == "/_health":
                 return await _respond(send, 200, {"ok": True})
             given = dict(scope["headers"]).get(b"authorization", b"")
+            if scope["path"].startswith("/v1/"):
+                # The model route has its own credential: the gateway token cannot spend, and this one cannot call tools.
+                if proxy is None or scope["path"] != "/v1/chat/completions":
+                    return await _respond(send, 404, {"error": "not found"})
+                if not hmac.compare_digest(given, proxy_expected):
+                    return await _respond(send, 401, {"error": "unauthorized"})
+                if scope["method"] != "POST":
+                    return await _respond(send, 405, {"error": "method not allowed"})
+                return await proxy.handle(scope, receive, send)
             if not hmac.compare_digest(given, expected):
                 return await _respond(send, 401, {"error": "unauthorized"})
             if scope["path"] == "/internal/report" and scope["method"] == "POST":

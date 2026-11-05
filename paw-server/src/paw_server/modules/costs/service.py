@@ -70,13 +70,17 @@ def reserve(
     global_cap: Decimal,
     run: UUID | None = None,
     run_cap: Decimal | None = None,
+    input_tokens: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Must run inside a transaction. Returned attempt is not authorized until commit."""
+    """Must run inside a transaction. Returned attempt is not authorized until commit.
+
+    `input_tokens` is an upper bound on the request's input (see tokens.input_bound); omit it to reserve the
+    model's whole context window."""
     now = now or datetime.now(UTC)
     day = day_at(now)
     rate = rate_for(conn, model)
-    amount = rate.reserve(output)
+    amount = rate.reserve(output, input_tokens)
     conn.execute(
         "INSERT INTO actor_budget_days(workspace_id,budget_day) VALUES (%s,%s) ON CONFLICT DO NOTHING",
         (workspace, day),
@@ -116,7 +120,7 @@ def reserve(
             day,
             model,
             rate.version,
-            rate.context,
+            input_tokens or rate.context,
             output,
             amount,
             now,

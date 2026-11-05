@@ -60,7 +60,12 @@ class Rate:
             / MILLION
         ).quantize(UNIT, rounding=ROUND_CEILING)
 
-    def reserve(self, output: int) -> Decimal:
+    def reserve(self, output: int, input_tokens: int | None = None) -> Decimal:
+        """Worst-case cost of one request: `input_tokens` of input (default: the whole context window)."""
         if type(output) is not int or not 1 <= output <= self.max_output:
             raise CostError("unsupported_output_bound")
-        return self.cost(self.context, output)
+        if input_tokens is None:
+            input_tokens = self.context
+        if type(input_tokens) is not int or not 1 <= input_tokens <= self.context:
+            raise CostError("input_exceeds_context")
+        return self.cost(input_tokens, output)

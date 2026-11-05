@@ -219,3 +219,31 @@ def test_run_cap_limits_a_run_and_run_cost_reports_status(env):
             assert s["rate_versions"] == [first["rate_version"]]
     finally:
         pool.close()
+
+
+def test_input_bound_shrinks_the_reservation_and_is_recorded(env):
+    pool = create_pool(env.settings())
+    pool.open()
+    try:
+        with pool.connection() as c:
+            ws = uuid4()
+            full = _reserve(c, workspace=ws)
+            small = _reserve(c, workspace=ws, input_tokens=1000)
+            rate = costs.rate_for(c, "gpt-4o-mini", small["rate_version"])
+            assert small["input_bound"] == 1000
+            assert small["reserved_usd"] == rate.cost(1000, 100) < full["reserved_usd"]
+            assert full["input_bound"] == rate.context
+            for bad in (0, rate.context + 1):
+                try:
+                    _reserve(c, input_tokens=bad)
+                    raise AssertionError("an out-of-range input bound must be refused")
+                except CostError as e:
+                    assert e.code == "input_exceeds_context"
+            assert costs.forward(c, small["id"])
+            over = {"prompt_tokens": 1001, "completion_tokens": 1}
+            assert not costs.settle(
+                c, small["id"], "gpt-4o-mini", over
+            )  # provider saw more than we bounded
+            assert costs.totals(c, ws, small["budget_day"])["unconfirmed"] == small["reserved_usd"]
+    finally:
+        pool.close()
