@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -157,3 +158,115 @@ def test_terminal_run_during_summary_keeps_followup_job_pending(h, env):
     assert worker.run_once()
     assert sql(env, "SELECT state FROM agent_session_jobs") == [("done",)]
     assert sql(env, "SELECT count(*) FROM agent_summaries WHERE invalidated_at IS NULL") == [(1,)]
+
+
+# ---- summaries spend from the same budget as runs (A1-07) ---------------------------------------------------------
+
+
+def summary_attempts(env):
+    return sql(
+        env,
+        "SELECT a.kind, a.run_id IS NULL, a.actor_id, r.state FROM actor_cost_attempts a "
+        "JOIN actor_cost_results r ON r.attempt_id = a.id ORDER BY a.authorized_at",
+    )
+
+
+def ok_completion(calls=None):
+    def complete(messages, max_tokens):
+        if calls is not None:
+            calls.append(messages)
+        return Completion("Task one complete.", "gpt-4o-mini", 120, 20)
+
+    return complete
+
+
+def test_a_summary_reserves_before_the_call_and_settles_from_usage(h, env):
+    task_completed(h)
+    seen = []
+
+    def complete(messages, max_tokens):
+        seen.append(
+            summary_attempts(env)
+        )  # visible and fenced as forwarded while the request is in flight
+        return Completion("Task one complete.", "gpt-4o-mini", 120, 20)
+
+    assert SummaryWorker(h.pool, h.settings, complete).run_once()
+    assert seen == [[("summary", True, "admin-hermes", "forwarded")]]
+    assert summary_attempts(env) == [("summary", True, "admin-hermes", "settled")]
+    assert sql(env, "SELECT cost_usd > 0 FROM actor_cost_results") == [(True,)]
+
+
+def test_a_spent_day_defers_the_summary_to_the_next_midnight_without_calling_the_provider(h, env):
+    task_completed(h)
+    calls = []
+    spent = h.settings.model_copy(update={"cost_shared_daily_usd": Decimal("0.0000001")})
+    assert SummaryWorker(h.pool, spent, ok_completion(calls)).run_once()
+    assert calls == [] and summary_attempts(env) == []
+    assert sql(
+        env,
+        "SELECT state, error_code, attempts, available_at > now() + interval '1 minute' FROM agent_session_jobs",
+    ) == [("pending", "budget_deferred", 0, True)]
+    # Nothing is claimable until the reset, however often the worker polls.
+    assert SummaryWorker(h.pool, spent, ok_completion(calls)).run_once() is False
+    # After the reset it runs and spends normally.
+    sql(env, "UPDATE agent_session_jobs SET available_at = now()")
+    assert SummaryWorker(h.pool, h.settings, ok_completion(calls)).run_once()
+    assert len(calls) == 1 and summary_attempts(env)[0][3] == "settled"
+    assert sql(env, "SELECT count(*) FROM agent_summaries") == [(1,)]
+
+
+def test_repeated_deferrals_never_use_up_the_retry_attempts(h, env):
+    task_completed(h)
+    spent = h.settings.model_copy(update={"cost_shared_daily_usd": Decimal("0.0000001")})
+    for _ in range(5):
+        sql(env, "UPDATE agent_session_jobs SET available_at = now()")
+        assert SummaryWorker(h.pool, spent, ok_completion()).run_once()
+    assert sql(env, "SELECT state, attempts FROM agent_session_jobs") == [("pending", 0)]
+
+
+def test_a_failed_request_keeps_its_reservation_as_uncertain_spend(h, env):
+    task_completed(h)
+
+    def fail(*args):
+        raise LLMError("timeout after send")
+
+    assert SummaryWorker(h.pool, h.settings, fail).run_once()
+    assert summary_attempts(env) == [("summary", True, "admin-hermes", "uncertain")]
+    assert sql(env, "SELECT error_code FROM agent_session_jobs") == [("summary_unavailable",)]
+
+
+@pytest.mark.parametrize(
+    "usage", [(None, None), (10**9, 20), (120, 10**9)], ids=["missing", "input-over", "output-over"]
+)
+def test_unusable_usage_leaves_the_spend_uncertain_not_free(h, env, usage):
+    task_completed(h)
+
+    def complete(messages, max_tokens):
+        return Completion("Task one complete.", "gpt-4o-mini", *usage)
+
+    assert SummaryWorker(h.pool, h.settings, complete).run_once()
+    assert summary_attempts(env) == [("summary", True, "admin-hermes", "uncertain")]
+
+
+def test_an_unpriced_summary_model_fails_closed_without_calling_or_deferring(h, env):
+    task_completed(h)
+    calls = []
+    unpriced = h.settings.model_copy(update={"agent_summary_model": "no-such-model"})
+    assert SummaryWorker(h.pool, unpriced, ok_completion(calls)).run_once()
+    assert calls == [] and summary_attempts(env) == []
+    assert sql(env, "SELECT state, error_code, attempts FROM agent_session_jobs") == [
+        ("pending", "budget_unavailable", 1)
+    ]
+
+
+def test_a_stale_summary_is_still_settled_because_it_was_billed(h, env):
+    sid, _ = task_completed(h)
+    mid = sql(env, "SELECT id FROM agent_session_messages WHERE kind='user'")[0][0]
+
+    def forget_then_answer(messages, max_tokens):
+        h.c.post(f"/v1/agent-sessions/{sid}/messages/{mid}/forget", headers=AUTH)
+        return Completion("Task one complete.", "gpt-4o-mini", 120, 20)
+
+    assert SummaryWorker(h.pool, h.settings, forget_then_answer).run_once()
+    assert summary_attempts(env) == [("summary", True, "admin-hermes", "settled")]
+    assert sql(env, "SELECT count(*) FROM agent_summaries") == [(0,)]
