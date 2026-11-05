@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from psycopg_pool import ConnectionPool
 
 from paw_server.core.config import Settings
 from paw_server.modules.connectors import store as connector_store
+from paw_server.modules.costs import service as costs
 from paw_server.modules.gateway import attestation as att
 from paw_server.modules.gateway.policy import Decision, PolicyInput, RunBinding, decide
 from paw_server.modules.gateway.registry import ToolRegistry, enabled_tools, validate_arguments
@@ -113,7 +115,24 @@ class GatewayService:
                 (self.settings.gateway_runtime, list(CALLABLE_STATES)),
             ).fetchall()
             conn.commit()
-        return list(rows)
+        return [self._with_costs(r) for r in rows]
+
+    def _with_costs(self, run: dict[str, Any]) -> dict[str, Any]:
+        """Spend so far from the cost ledger: this run, this actor today and everyone today. Unreadable = unavailable."""
+        try:
+            with self.pool.connection() as conn:
+                today = costs.day_at(datetime.now(UTC))
+                ws, actor = run["workspace_id"], run["executing_actor_id"]
+                spend = {
+                    "cost_run": costs.used(costs.totals(conn, ws, today, run=run["id"])),
+                    "cost_today": costs.used(costs.totals(conn, ws, today, actor=actor)),
+                    "cost_shared": costs.used(costs.totals(conn, ws, today)),
+                }
+                conn.commit()
+            return {**run, **spend, "cost_unavailable": False}
+        except Exception:
+            log.exception("gateway could not read spend", extra={"run_id": str(run["id"])})
+            return {**run, "cost_unavailable": True}
 
     # ---- the call ---------------------------------------------------------------------------------------------
     def handle_call(self, tool_name: str, args: Any, *, authenticated: bool = True) -> ToolOutcome:
@@ -125,6 +144,8 @@ class GatewayService:
             RunBinding(
                 run_id=str(r["id"]), actor_id=r["executing_actor_id"], profile_version=r["profile_version"] or 0,
                 policy=r["policy"], calls_so_far=r["calls"],
+                cost_run_usd=r.get("cost_run", 0), cost_today_usd=r.get("cost_today", 0),
+                cost_shared_usd=r.get("cost_shared", 0), cost_unavailable=r.get("cost_unavailable", False),
             )
             for r in runs
         )  # fmt: skip
@@ -149,6 +170,7 @@ class GatewayService:
                 authenticated=authenticated, active_runs=bindings, attestation=attestation, tool=spec,
                 tool_enabled=enabled, args_problems=problems, connection=connection,
                 max_calls_per_run=self.settings.gateway_max_calls_per_run,
+                shared_daily_usd=self.settings.cost_shared_daily_usd,
             )
         )  # fmt: skip
         ctx = (

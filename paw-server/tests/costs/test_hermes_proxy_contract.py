@@ -8,8 +8,8 @@ import os
 import subprocess
 import threading
 import time
-from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -95,7 +95,9 @@ def test_pinned_runtime_proxy_contract(tmp_path):
     server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    plugin = Path(__file__).parents[3] / "deploy/hermes/plugins/paw-guard/__init__.py"  # the shipped plugin
+    plugin = (
+        Path(__file__).parents[3] / "deploy/hermes/plugins/paw-guard/__init__.py"
+    )  # the shipped plugin
     name = "paw-a1-contract-" + uuid4().hex[:10]
     api_key = uuid4().hex + uuid4().hex
     try:

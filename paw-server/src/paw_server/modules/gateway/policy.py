@@ -3,6 +3,7 @@ code is recorded. Nothing here reads the database or the network; the caller gat
 be tested with a table and the order cannot silently change."""
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from paw_server.modules.gateway.registry import ToolSpec
@@ -24,8 +25,11 @@ class RunBinding:
     profile_version: int
     policy: dict[str, Any]  # compiled policy: grants, resource_scopes, budgets
     calls_so_far: int = 0
-    cost_run_usd: float = 0.0
-    cost_today_usd: float = 0.0
+    # Confirmed plus reserved (including unconfirmed) spend from the cost ledger; never read from the runtime.
+    cost_run_usd: Decimal | float = Decimal(0)
+    cost_today_usd: Decimal | float = Decimal(0)  # this actor, Asia/Kolkata day
+    cost_shared_usd: Decimal | float = Decimal(0)  # every actor in the workspace, same day
+    cost_unavailable: bool = False  # the ledger could not be read: fail closed
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,7 @@ class PolicyInput:
     )
     resource: str | None = None  # the resource a call targets, for scoped tools (e.g. a repository)
     max_calls_per_run: int = 40
+    shared_daily_usd: Decimal | float = Decimal(3)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -57,6 +62,31 @@ class Decision:
 
 def _deny(reason: str, detail: str = "") -> Decision:
     return Decision(False, reason, detail)
+
+
+def _dec(v: Any) -> Decimal:
+    return Decimal(str(v))
+
+
+def _over_budget(run: RunBinding, shared_cap: Decimal | float) -> str | None:
+    """Which limit is spent, or None. Default deny: a missing or malformed limit, or an unreadable ledger, counts as spent."""
+    if run.cost_unavailable:
+        return "accounting unavailable"
+    budgets = run.policy.get("budgets")
+    if not isinstance(budgets, dict):
+        return "no budget in the policy"
+    try:
+        checks = (
+            ("run", run.cost_run_usd, budgets["per_run_usd"]),
+            ("actor daily", run.cost_today_usd, budgets["daily_usd"]),
+            ("shared daily", run.cost_shared_usd, shared_cap),
+        )
+        for name, spent, cap in checks:
+            if _dec(spent) >= _dec(cap):
+                return f"{name} budget spent"
+    except (KeyError, InvalidOperation):
+        return "malformed budget"
+    return None
 
 
 def decide(p: PolicyInput) -> Decision:
@@ -87,13 +117,8 @@ def decide(p: PolicyInput) -> Decision:
         return _deny("OUT_OF_SCOPE")
     if run.calls_so_far >= p.max_calls_per_run:
         return _deny("RATE_LIMITED", f"{run.calls_so_far} calls in this run")
-    budgets = run.policy.get("budgets")
-    if (
-        not isinstance(budgets, dict)  # default deny: a policy without budgets is a broken policy
-        or run.cost_run_usd >= budgets.get("per_run_usd", 0)
-        or run.cost_today_usd >= budgets.get("daily_usd", 0)
-    ):
-        return _deny("BUDGET_EXCEEDED")
+    if (over := _over_budget(run, p.shared_daily_usd)) is not None:
+        return _deny("BUDGET_EXCEEDED", over)
     if p.tool.approval_required or p.tool.side_effect_class == "external_write":
         return _deny("APPROVAL_REQUIRED")
     return Decision(True, "OK")
