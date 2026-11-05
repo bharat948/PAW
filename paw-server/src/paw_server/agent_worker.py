@@ -32,6 +32,8 @@ def main() -> None:
     ):  # runs beside the (blocking) run loop, so a hung stop cannot hold a run forever
         while not stop.wait(5):
             try:
+                if n := worker.expire_deadlines():
+                    log.warning("asked %s run(s) past their deadline to stop", n)
                 if n := worker.reap():
                     log.warning("ended %s run(s) whose stop was not confirmed in time", n)
             except Exception:

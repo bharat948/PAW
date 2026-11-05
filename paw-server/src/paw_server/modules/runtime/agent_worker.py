@@ -106,6 +106,22 @@ class AgentWorker:
         with self.pool.connection() as conn:
             return lc.expire_cancelling(conn, self.settings.agent_stop_deadline_s)
 
+    def expire_deadlines(self) -> int:
+        """Ask runs past their deadline to stop. The stop itself is best effort: if Hermes never confirms it, the
+        stop deadline ends the run as INTERRUPTED with its partial output and `deadline_exceeded` as the reason."""
+        with self.pool.connection() as conn:
+            due = lc.expired_running(conn, self.runtime_id)
+            n = 0
+            for rid in due:
+                outcome, hid = lc.request_cancel(conn, rid, reason="deadline_exceeded")
+                if outcome == "stopping" and hid:
+                    n += 1
+                    try:
+                        self.runtime.stop_run(hid)
+                    except Exception:
+                        log.warning("deadline stop not delivered", extra={"run_id": str(rid)})
+        return n
+
     def run_once(self) -> bool:
         """Claim and fully process one run. False when there was nothing to do."""
         with self.pool.connection() as conn:
@@ -151,6 +167,7 @@ class AgentWorker:
             lc.bind_profile(
                 conn, run_id, profile_version_id=profile.version_id, version=profile.version,
                 compiled_hash=profile.compiled.compiled_hash,
+                max_run_seconds=profile.compiled.policy["max_run_seconds"],
             )  # fmt: skip
             assembly = assembler.assemble(
                 conn,

@@ -246,6 +246,7 @@ def test_run_status_describes_the_previous_run_in_this_conversation(h, env):
             profile_version_id=prof.version_id,
             version=prof.version,
             compiled_hash="x",
+            max_run_seconds=600,
         )
         lc.move(conn, claimed["id"], "RUNNING", hermes_run_id="h2")
     g = build(h, env)

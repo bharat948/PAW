@@ -414,3 +414,13 @@ def test_no_prompt_or_credential_reaches_the_logs(h, provider, caplog):
         call(make_proxy(h, provider), run, body(n=2))
     text = "\n".join(f"{r.getMessage()} {r.__dict__}" for r in caplog.records)
     assert PROMPT not in text and UPSTREAM_KEY not in text and PROXY_TOKEN not in text
+
+
+def test_a_run_past_its_deadline_cannot_spend_even_before_the_reaper_notices(h, provider):
+    run = start_run(h)["id"]
+    with h.pool.connection() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET deadline_at = now() - interval '1 second' WHERE id = %s", (run,)
+        )
+        conn.commit()
+    denied(h, provider, run, body(), "run_not_active", 403)

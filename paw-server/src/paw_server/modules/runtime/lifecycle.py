@@ -227,13 +227,20 @@ def claim_next(conn: Conn, runtime_id: UUID) -> dict[str, Any] | None:
 
 
 def bind_profile(
-    conn: Conn, run_id: UUID, *, profile_version_id: UUID, version: int, compiled_hash: str
+    conn: Conn,
+    run_id: UUID,
+    *,
+    profile_version_id: UUID,
+    version: int,
+    compiled_hash: str,
+    max_run_seconds: int,
 ) -> None:
-    """Record which profile version a run uses. Set once at claim; a later activation never changes it."""
+    """Record which profile version a run uses, and when its time is up. Set once at claim, and persisted so a
+    restart cannot extend it; a later activation never changes either."""
     conn.execute(
-        "UPDATE agent_runs SET profile_version_id = %s, profile_version = %s, compiled_hash = %s "
-        "WHERE id = %s AND profile_version_id IS NULL",
-        (profile_version_id, version, compiled_hash, run_id),
+        "UPDATE agent_runs SET profile_version_id = %s, profile_version = %s, compiled_hash = %s, "
+        "deadline_at = now() + make_interval(secs => %s) WHERE id = %s AND profile_version_id IS NULL",
+        (profile_version_id, version, compiled_hash, max_run_seconds, run_id),
     )
     conn.commit()
 
@@ -353,9 +360,12 @@ def finish(
     return to
 
 
-def request_cancel(conn: Conn, run_id: UUID) -> tuple[str, str | None]:
+def request_cancel(
+    conn: Conn, run_id: UUID, *, reason: str | None = None
+) -> tuple[str, str | None]:
     """(outcome, hermes_run_id). outcome: cancelled (was queued) · stopping (stop must now be sent) ·
-    already (cancelling or finished) · not_yet (dispatching: retry in a moment)."""
+    already (cancelling or finished) · not_yet (dispatching: retry in a moment). `reason` is recorded as the
+    run's error code and in the state event (deadline_exceeded), and survives to the terminal state."""
     with conn.transaction():
         row = ledger.lock_for_run(conn, run_id)
         if row is None:
@@ -365,10 +375,17 @@ def request_cancel(conn: Conn, run_id: UUID) -> tuple[str, str | None]:
             pass
         elif state == "RUNNING":
             conn.execute(
-                "UPDATE agent_runs SET state = 'CANCELLING', cancel_requested_at=now() WHERE id = %s",
-                (run_id,),
+                "UPDATE agent_runs SET state = 'CANCELLING', cancel_requested_at=now(), "
+                "error_code = coalesce(%s, error_code) WHERE id = %s",
+                (reason, run_id),
             )
-            _insert_event(conn, run_id, "run.state", {"state": "CANCELLING"}, None)
+            _insert_event(
+                conn,
+                run_id,
+                "run.state",
+                {"state": "CANCELLING", **({"reason": reason} if reason else {})},
+                None,
+            )
             return "stopping", row["hermes_run_id"]
         elif state == "DISPATCHING":
             return "not_yet", None
@@ -418,11 +435,22 @@ def is_terminal(conn: Conn, run_id: UUID) -> bool:
     return row is None or row["state"] in TERMINAL
 
 
+def expired_running(conn: Conn, runtime_id: UUID) -> list[UUID]:
+    """Runs on this runtime that are RUNNING past their persisted deadline and have not been asked to stop."""
+    rows = conn.execute(
+        "SELECT id FROM agent_runs WHERE runtime_id = %s AND state = 'RUNNING' AND deadline_at < now() "
+        "ORDER BY deadline_at, id",
+        (runtime_id,),
+    ).fetchall()
+    conn.commit()
+    return [r["id"] for r in rows]
+
+
 def expire_cancelling(conn: Conn, deadline_s: int) -> int:
     """A stop that Hermes has not confirmed within the deadline ends the run as INTERRUPTED (spec 9: "stop not
     confirmed in time"). The output streamed so far is kept. Returns how many runs were ended."""
     rows = conn.execute(
-        "SELECT r.id FROM agent_runs r WHERE r.state = 'CANCELLING' AND coalesce(r.cancel_requested_at, (SELECT max(occurred_at) FROM agent_run_events e "
+        "SELECT r.id, r.error_code FROM agent_runs r WHERE r.state = 'CANCELLING' AND coalesce(r.cancel_requested_at, (SELECT max(occurred_at) FROM agent_run_events e "
         "WHERE e.run_id = r.id AND e.type = 'run.state' AND e.payload->>'state' = 'CANCELLING')) "
         "< now() - make_interval(secs => %s)",
         (deadline_s,),
@@ -435,7 +463,8 @@ def expire_cancelling(conn: Conn, deadline_s: int) -> int:
             r["id"],
             "INTERRUPTED",
             payload={"reason": "stop_not_confirmed"},
-            error_code="stop_not_confirmed",
+            error_code=r["error_code"]
+            or "stop_not_confirmed",  # a deadline stays the stated reason
             output=partial_output(conn, r["id"]),
         )
         n += ended is not None

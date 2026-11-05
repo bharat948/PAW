@@ -225,7 +225,12 @@ def test_a_run_binds_the_profile_only_once(harness, env):
     harness.worker.run_once()
     with harness.pool.connection() as conn:
         lc.bind_profile(
-            conn, UUID(run["id"]), profile_version_id=UUID(int=1), version=99, compiled_hash="x"
+            conn,
+            UUID(run["id"]),
+            profile_version_id=UUID(int=1),
+            version=99,
+            compiled_hash="x",
+            max_run_seconds=600,
         )
     assert sql(env, "SELECT profile_version FROM agent_runs WHERE id = %s", run["id"]) == [(1,)]
 

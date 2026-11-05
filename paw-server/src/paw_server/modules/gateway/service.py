@@ -111,7 +111,8 @@ class GatewayService:
                 "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.name = %s "
                 "JOIN agent_sessions s ON s.id = r.session_id "
                 "JOIN actor_compiled_profiles c ON c.profile_version_id = r.profile_version_id "
-                "WHERE r.state = ANY(%s) AND s.deleted_at IS NULL",
+                "WHERE r.state = ANY(%s) AND s.deleted_at IS NULL "
+                "AND (r.deadline_at IS NULL OR r.deadline_at > now())",
                 (self.settings.gateway_runtime, list(CALLABLE_STATES)),
             ).fetchall()
             conn.commit()

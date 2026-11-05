@@ -73,7 +73,8 @@ def start_run(h, state="RUNNING"):
         claimed = lc.claim_next(conn, h.worker.runtime_id)
         prof = identity.get_active(conn, "admin-hermes")
         lc.bind_profile(conn, claimed["id"], profile_version_id=prof.version_id, version=prof.version,
-                        compiled_hash=prof.compiled.compiled_hash)  # fmt: skip
+                        compiled_hash=prof.compiled.compiled_hash,
+                        max_run_seconds=prof.compiled.policy["max_run_seconds"])  # fmt: skip
         if state == "RUNNING":
             lc.move(conn, claimed["id"], "RUNNING", hermes_run_id="h1")
         if state == "CANCELLING":
@@ -503,3 +504,19 @@ def test_an_unreadable_ledger_denies_the_call(h, calls, monkeypatch):
     monkeypatch.setattr(costs, "totals", broken)
     out = g.handle_call("paw_system_status", {})
     assert out.reason == "BUDGET_EXCEEDED" and calls.contexts == []
+
+
+def test_a_run_past_its_deadline_gets_no_tool_calls(h, calls, env):
+    run = start_run(h)
+    g = gateway(h, calls)
+    assert g.handle_call("paw_system_status", {}).reason == "OK"
+    audit_before = len(audit(env))
+    with h.pool.connection() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET deadline_at = now() - interval '1 second' WHERE id = %s",
+            (run["id"],),
+        )
+        conn.commit()
+    out = g.handle_call("paw_system_status", {})
+    assert out.reason == "NO_ACTIVE_RUN" and len(calls.contexts) == 1
+    assert len(audit(env)) == audit_before + 1  # the denial is still audited
