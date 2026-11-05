@@ -34,6 +34,7 @@ def main() -> None:
             try:
                 if n := worker.expire_deadlines():
                     log.warning("asked %s run(s) past their deadline to stop", n)
+                worker.reconcile_costs()
                 if n := worker.reap():
                     log.warning("ended %s run(s) whose stop was not confirmed in time", n)
             except Exception:

@@ -9,6 +9,7 @@ from uuid import UUID
 from psycopg_pool import ConnectionPool
 
 from paw_server.core.config import Settings
+from paw_server.modules.costs import service as costs
 from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
 from paw_server.modules.runtime.protocol import AgentRuntime, RuntimeError_, RuntimeEvent
@@ -105,6 +106,22 @@ class AgentWorker:
         """End runs whose stop was never confirmed. Safe to call from another thread while a run is processed."""
         with self.pool.connection() as conn:
             return lc.expire_cancelling(conn, self.settings.agent_stop_deadline_s)
+
+    def reconcile_costs(self) -> dict[str, Any]:
+        """Release holds a crash left unsent, label unfinished sends uncertain, settle what the runtime's usage proves."""
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                result = costs.reconcile(conn)
+        if result["released"] or result["uncertain"] or result["runs"].get("settled"):
+            log.warning(
+                "cost reconciliation",
+                extra={
+                    "released": [str(i) for i in result["released"]],
+                    "uncertain": [str(i) for i in result["uncertain"]],
+                    "late_evidence": result["runs"].get("settled", 0),
+                },
+            )
+        return result
 
     def expire_deadlines(self) -> int:
         """Ask runs past their deadline to stop. The stop itself is best effort: if Hermes never confirms it, the

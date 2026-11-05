@@ -5,6 +5,7 @@ takes both, always in this order; settlement locks just the one result row. Acco
 no message text and survives conversation purge.
 """
 
+import logging
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -14,7 +15,12 @@ from zoneinfo import ZoneInfo
 from paw_server.modules.costs.pricing import CostError, Rate
 from paw_server.modules.ingestion.jobs import Conn
 
+log = logging.getLogger("paw.costs")
 ZONE = ZoneInfo("Asia/Kolkata")
+RESERVED_GRACE = timedelta(seconds=60)  # a hold that was never sent after this long is abandoned
+FORWARDED_GRACE = timedelta(
+    minutes=5
+)  # a send with no outcome after this long is labelled uncertain
 ZERO = Decimal(0)
 
 
@@ -242,3 +248,107 @@ def run_cost(conn: Conn, rid: UUID) -> dict[str, Any]:
         ),
         "rate_versions": sorted({r["rate_version"] for r in rows}),
     }
+
+
+# ---- crash accounting and late evidence (A1-09) -------------------------------------------------------------------
+
+
+def sweep(conn: Conn, now: datetime | None = None) -> dict[str, list[UUID]]:
+    """Resolve what a crash leaves behind. Caller commits.
+
+    reserved  -> released : `forward` is the durable send fence and both it and `release` only act on state
+                'reserved', so a hold still in that state was provably never sent. If this wins a race, the late
+                sender's `forward` fails and the call is denied; if the sender wins, this does nothing.
+    forwarded -> uncertain: the send may have been billed. Both states hold the reservation, so this is a label;
+                a late `settle` still works from either.
+    Nothing here ever frees money that might have been spent."""
+    now = now or datetime.now(UTC)
+    released = conn.execute(
+        "UPDATE actor_cost_results r SET state='released', updated_at=now() FROM actor_cost_attempts a "
+        "WHERE a.id=r.attempt_id AND r.state='reserved' AND a.authorized_at < %s RETURNING r.attempt_id",
+        (now - RESERVED_GRACE,),
+    ).fetchall()
+    marked = conn.execute(
+        "UPDATE actor_cost_results SET state='uncertain', updated_at=now() "
+        "WHERE state='forwarded' AND updated_at < %s RETURNING attempt_id",
+        (now - FORWARDED_GRACE,),
+    ).fetchall()
+    return {
+        "released": [r["attempt_id"] for r in released],
+        "uncertain": [r["attempt_id"] for r in marked],
+    }
+
+
+TERMINAL_RUN = ("SUCCEEDED", "FAILED", "CANCELLED", "INTERRUPTED")
+
+
+def reconcile_run(conn: Conn, run: UUID) -> str:
+    """Settle a finished run's one uncertain attempt from the runtime's run-level usage, when that is unambiguous.
+
+    The runtime reports usage for the whole run. Subtract what the ledger already settled; if exactly one attempt of
+    the run is uncertain and nothing else is still in flight, the remainder is the usage of that one call. Anything
+    less clear leaves the reservation held: missing, zero or contradictory evidence is never taken as 'free'.
+    Settlement still enforces the attempt's own bounds, so the worst case is a wrong split inside an amount that
+    was already reserved. Caller commits."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,11))", (str(run),))
+    ev = conn.execute(
+        "SELECT state, tokens_in, tokens_out, cache_read, cache_write FROM agent_runs WHERE id=%s",
+        (run,),
+    ).fetchone()
+    if (
+        not ev
+        or ev["state"] not in TERMINAL_RUN
+        or ev["tokens_in"] is None
+        or ev["tokens_out"] is None
+    ):
+        return "no_evidence"
+    if ev["cache_read"] or ev["cache_write"]:
+        return "ambiguous_cache"  # cannot tell whether input_tokens includes the cached part
+    rows = conn.execute(
+        "SELECT a.id, a.requested_model, r.state, r.tokens_in, r.tokens_out FROM actor_cost_attempts a "
+        "JOIN actor_cost_results r ON r.attempt_id=a.id WHERE a.run_id=%s FOR UPDATE OF r",
+        (run,),
+    ).fetchall()
+    if any(r["state"] in ("reserved", "forwarded") for r in rows):
+        return "pending"  # a call may still report for itself
+    uncertain = [r for r in rows if r["state"] == "uncertain"]
+    if len(uncertain) != 1:
+        return "no_candidate" if not uncertain else "not_attributable"
+    settled = [r for r in rows if r["state"] == "settled"]
+    inputs = ev["tokens_in"] - sum(r["tokens_in"] or 0 for r in settled)
+    outputs = ev["tokens_out"] - sum(r["tokens_out"] or 0 for r in settled)
+    if inputs < 0 or outputs < 0:
+        return "inconsistent"
+    if inputs == 0 and outputs == 0:
+        return "no_usage"
+    target = uncertain[0]
+    ok = settle(
+        conn,
+        target["id"],
+        target["requested_model"],
+        {"prompt_tokens": inputs, "completion_tokens": outputs},
+    )
+    if ok:
+        log.info(
+            "late_evidence settled an uncertain attempt",
+            extra={"run_id": str(run), "attempt": str(target["id"])},
+        )
+    return "settled" if ok else "out_of_bounds"
+
+
+def reconcile(conn: Conn, now: datetime | None = None) -> dict[str, Any]:
+    """One pass: sweep, then try the late-evidence settlement for every recent run that still has an uncertain
+    attempt. Safe to repeat and to run from several workers. Caller commits."""
+    swept = sweep(conn, now)
+    today = day_at(now or datetime.now(UTC))
+    runs = conn.execute(
+        "SELECT DISTINCT a.run_id FROM actor_cost_attempts a JOIN actor_cost_results r ON r.attempt_id=a.id "
+        "WHERE r.state='uncertain' AND a.run_id IS NOT NULL AND a.budget_day >= %s LIMIT 50",
+        (today - timedelta(days=2),),
+    ).fetchall()
+    outcomes: dict[str, int] = {}
+    for r in runs:
+        with conn.transaction():
+            o = reconcile_run(conn, r["run_id"])
+        outcomes[o] = outcomes.get(o, 0) + 1
+    return {**swept, "runs": outcomes}
