@@ -3,6 +3,7 @@
 import json
 import time
 from collections.abc import Iterator
+from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from paw_server.api.deps import CurrentActor
 from paw_server.core.errors import ApiError
+from paw_server.modules.costs import service as costs
 from paw_server.modules.gateway import attestation
 from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
@@ -46,7 +48,7 @@ def _iso(v: Any) -> str | None:
     return v.isoformat() if v else None
 
 
-def _run_out(r: dict[str, Any]) -> dict[str, Any]:
+def _run_out(r: dict[str, Any], cost: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "id": str(r["id"]),
         "session_id": str(r["session_id"]),
@@ -61,7 +63,16 @@ def _run_out(r: dict[str, Any]) -> dict[str, Any]:
         "queued_at": _iso(r["queued_at"]),
         "started_at": _iso(r["started_at"]),
         "finished_at": _iso(r["finished_at"]),
+        "cost": cost if cost is not None else dict(costs.UNKNOWN_COST),
     }
+
+
+def _runs_out(request: Request, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Runs with their spend, read in one query. The caller has already scoped `rows` to the owner."""
+    with request.app.state.pool.connection() as conn:
+        spend = costs.run_costs(conn, [r["id"] for r in rows])
+        conn.commit()
+    return [_run_out(r, spend[r["id"]]) for r in rows]
 
 
 def _own_session(request: Request, actor: Any, session_id: UUID) -> dict[str, Any]:
@@ -139,7 +150,8 @@ def list_sessions(
 def list_runs(request: Request, actor: CurrentActor, session_id: UUID) -> dict[str, Any]:
     _own_session(request, actor, session_id)
     with request.app.state.pool.connection() as conn:
-        return {"runs": [_run_out(r) for r in lc.list_runs(conn, session_id)]}
+        rows = lc.list_runs(conn, session_id)
+    return {"runs": _runs_out(request, rows)}
 
 
 @router.post("/v1/agent-sessions/{session_id}/runs")
@@ -174,7 +186,27 @@ def submit_run(
             409, "idempotency_conflict", "That request id was used with a different message."
         ) from exc
     response.status_code = 202 if created else 200
-    return _run_out(run)
+    return _runs_out(request, [run])[0]
+
+
+@router.get("/v1/agent-spend")
+def agent_spend(request: Request, actor: CurrentActor) -> dict[str, Any]:
+    """Today's model spend for the signed-in owner's workspace: confirmed, held, and unconfirmed (it may or may not
+    have been billed), beside the limits and the next reset. Amounts only: no conversation content."""
+    st = request.app.state
+    with st.pool.connection() as conn:
+        active = identity.get_active(conn, identity.ADMIN)
+        if active is None:
+            raise ApiError(503, "profile_unavailable", "Admin Hermes has no active profile.")
+        out = costs.spend_today(
+            conn,
+            actor.workspace_id,
+            identity.ADMIN,
+            actor_cap=Decimal(str(active.compiled.policy["budgets"]["daily_usd"])),
+            shared_cap=st.settings.cost_shared_daily_usd,
+        )
+        conn.commit()
+    return out
 
 
 @router.get("/v1/agent-runs/{run_id}")
@@ -184,7 +216,7 @@ def get_run(request: Request, actor: CurrentActor, run_id: UUID) -> dict[str, An
         run = lc.get_run(conn, run_id, actor.id, actor.workspace_id)
     if run is None:
         raise ApiError(404)
-    return _run_out(run)
+    return _runs_out(request, [run])[0]
 
 
 @router.post("/v1/agent-runs/{run_id}/cancel")
@@ -208,7 +240,7 @@ def cancel_run(request: Request, actor: CurrentActor, run_id: UUID) -> dict[str,
     with st.pool.connection() as conn:
         run = lc.get_run(conn, run_id, actor.id, actor.workspace_id)
     assert run is not None
-    return _run_out(run)
+    return _runs_out(request, [run])[0]
 
 
 def _sse(seq: int, type_: str, payload: dict[str, Any]) -> str:

@@ -4,6 +4,16 @@ export function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MiB`
 }
 
+/** A dollar amount from an exact decimal string. Never rounds a non-zero amount down to $0.00. */
+export function formatUsd(amount: string | null | undefined): string {
+  if (amount === null || amount === undefined) return 'unknown'
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return 'unknown'
+  if (n === 0) return '$0.00'
+  if (n < 0.0001) return '<$0.0001'
+  return '$' + n.toFixed(4).replace(/(\.\d\d)0+$/, '$1').replace(/(\.\d\d\d)0$/, '$1')
+}
+
 export function relativeTime(iso: string, now = Date.now()): string {
   const s = Math.round((now - new Date(iso).getTime()) / 1000)
   if (s < 45) return 'just now'

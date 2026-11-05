@@ -275,6 +275,12 @@ details.opts summary::-webkit-details-marker { display: none; }
 .tool-activity { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .4rem; font-size: .85rem; color: var(--muted); }
 .empty-hint { display: flex; gap: .6rem; align-items: center; }
 .agent-status { margin: 0; }
+.run-cost { margin: 0; }
+.spend-panel { margin-top: 1rem; padding: .6rem .9rem; }
+.spend-panel dl { display: grid; gap: .5rem; margin: .6rem 0; }
+.spend-panel dt { font-weight: 600; }
+.spend-panel dd { margin: 0; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.spend-panel meter { width: 8rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* profile */

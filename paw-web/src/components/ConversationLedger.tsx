@@ -4,7 +4,8 @@ export function ConversationLedger({ page, onEdit, onForget, onOpen }: {
   page: LedgerPage; onEdit: (m: LedgerMessage) => void; onForget: (m: LedgerMessage) => void; onOpen: (id: string) => void
 }) {
   return <>
-    {page.summary_job?.error_code && <p role="status" className="muted">A summary is unavailable. Recent conversation history is still used.</p>}
+    {page.summary_job?.error_code === 'budget_deferred' && <p role="status" className="muted">Summarising waits for the daily budget to reset. Recent conversation history is still used.</p>}
+    {page.summary_job?.error_code && page.summary_job.error_code !== 'budget_deferred' && <p role="status" className="muted">A summary is unavailable. Recent conversation history is still used.</p>}
     {page.messages.map((m) => {
       const summary = page.summaries.find((s) => s.message_id === m.id)
       const checkpoint = m.data?.type === 'task_checkpoint'

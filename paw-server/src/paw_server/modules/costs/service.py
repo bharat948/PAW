@@ -196,57 +196,87 @@ def settle(conn: Conn, aid: UUID, served_model: str, usage: Any) -> bool:
     return True
 
 
-def run_cost(conn: Conn, rid: UUID) -> dict[str, Any]:
+UNKNOWN_COST: dict[str, Any] = {
+    "confirmed_usd": None,
+    "reserved_usd": None,
+    "unconfirmed_usd": None,
+    "status": "unknown",
+    "served_model": None,
+    "rate_versions": [],
+}
+HELD = ("reserved", "forwarded", "uncertain")
+
+
+def run_costs(conn: Conn, run_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
+    """Spend per run in one query. `confirmed` is settled cost; `reserved` is money still held (not yet settled or
+    released), of which `unconfirmed` is what an unfinished or unprovable call may have cost. A run with no
+    attempts is `unknown`, never zero. Amounts are exact decimal strings; no message content is involved."""
     rows = conn.execute(
-        "SELECT a.rate_version,r.* FROM actor_cost_attempts a JOIN actor_cost_results r ON r.attempt_id=a.id WHERE a.run_id=%s ORDER BY a.authorized_at,a.id",
-        (rid,),
+        "SELECT a.run_id, a.rate_version, a.reserved_usd, r.state, r.cost_usd, r.served_model "
+        "FROM actor_cost_attempts a JOIN actor_cost_results r ON r.attempt_id=a.id "
+        "WHERE a.run_id = ANY(%s) ORDER BY a.authorized_at, a.id",
+        (run_ids,),
     ).fetchall()
-    if not rows:
-        return {
-            "confirmed_usd": None,
-            "reserved_usd": None,
-            "unconfirmed_usd": None,
-            "status": "unknown",
-            "served_model": None,
-            "rate_versions": [],
+    grouped: dict[UUID, list[dict[str, Any]]] = {}
+    for r in rows:
+        grouped.setdefault(r["run_id"], []).append(r)
+    out: dict[UUID, dict[str, Any]] = {}
+    for rid in run_ids:
+        rs = grouped.get(rid)
+        if not rs:
+            out[rid] = dict(UNKNOWN_COST)
+            continue
+        out[rid] = {
+            "confirmed_usd": str(sum((r["cost_usd"] or ZERO for r in rs), ZERO)),
+            "reserved_usd": str(sum((r["reserved_usd"] for r in rs if r["state"] in HELD), ZERO)),
+            "unconfirmed_usd": str(
+                sum((r["reserved_usd"] for r in rs if r["state"] == "uncertain"), ZERO)
+            ),
+            "status": "unconfirmed"
+            if any(r["state"] == "uncertain" for r in rs)
+            else (
+                "reserved"
+                if any(r["state"] in ("reserved", "forwarded") for r in rs)
+                else "confirmed"
+            ),
+            "served_model": next(
+                (r["served_model"] for r in reversed(rs) if r["served_model"]), None
+            ),
+            "rate_versions": sorted({r["rate_version"] for r in rs}),
         }
+    return out
+
+
+def run_cost(conn: Conn, rid: UUID) -> dict[str, Any]:
+    return run_costs(conn, [rid])[rid]
+
+
+def spend_today(
+    conn: Conn,
+    workspace: UUID,
+    actor: str,
+    *,
+    actor_cap: Decimal,
+    shared_cap: Decimal,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Today's (Asia/Kolkata) spend for one actor and for everyone, beside the caps and the reset time."""
+    now = now or datetime.now(UTC)
+    day = day_at(now)
+
+    def view(t: dict[str, Decimal], cap: Decimal) -> dict[str, str]:
+        return {
+            "confirmed_usd": str(t["confirmed"]),
+            "reserved_usd": str(t["reserved"]),
+            "unconfirmed_usd": str(t["unconfirmed"]),
+            "limit_usd": str(cap),
+        }
+
     return {
-        "confirmed_usd": str(sum((r["cost_usd"] or ZERO for r in rows), ZERO)),
-        "reserved_usd": str(
-            sum(
-                (
-                    r["reserved_usd"]
-                    for r in conn.execute(
-                        "SELECT a.reserved_usd FROM actor_cost_attempts a JOIN actor_cost_results r ON r.attempt_id=a.id WHERE a.run_id=%s AND r.state IN ('reserved','forwarded','uncertain')",
-                        (rid,),
-                    ).fetchall()
-                ),
-                ZERO,
-            )
-        ),
-        "unconfirmed_usd": str(
-            sum(
-                (
-                    r["reserved_usd"]
-                    for r in conn.execute(
-                        "SELECT a.reserved_usd FROM actor_cost_attempts a JOIN actor_cost_results r ON r.attempt_id=a.id WHERE a.run_id=%s AND r.state='uncertain'",
-                        (rid,),
-                    ).fetchall()
-                ),
-                ZERO,
-            )
-        ),
-        "status": "unconfirmed"
-        if any(r["state"] == "uncertain" for r in rows)
-        else (
-            "reserved"
-            if any(r["state"] in ("reserved", "forwarded") for r in rows)
-            else "confirmed"
-        ),
-        "served_model": next(
-            (r["served_model"] for r in reversed(rows) if r["served_model"]), None
-        ),
-        "rate_versions": sorted({r["rate_version"] for r in rows}),
+        "day": str(day),
+        "resets_at": reset_at(now).isoformat(),
+        "actor": view(totals(conn, workspace, day, actor=actor), actor_cap),
+        "shared": view(totals(conn, workspace, day), shared_cap),
     }
 
 

@@ -7,17 +7,20 @@ import {
   cancelAgentRun,
   createAgentSession,
   getAgentRun,
+  getAgentSpend,
   getRuntimeHealth,
   listAgentRuns,
   streamRunEvents,
   submitAgentRun,
   type AgentEvent,
   type AgentRun,
+  type AgentSpend,
   type RunState,
   type RuntimeHealth,
 } from '../api/client'
 import { ConversationDialog } from './ConversationDialog'
 import { ConversationLedger } from './ConversationLedger'
+import { RunCostLine, SpendPanel } from './SpendPanel'
 import { IconAlert, IconSend, IconSpark, IconStop } from './icons'
 
 const SESSION_KEY = 'paw.agent.session'
@@ -85,7 +88,13 @@ const REASON_TEXT: Record<string, string> = {
   TOOL_ERROR: 'failed',
   HANDLER_ERROR: 'failed',
 }
-export const decisionText = (d: Decision) => REASON_TEXT[d.reason] ?? (d.decision === 'allowed' ? 'allowed' : `denied: ${d.reason}`)
+const DEADLINE_TEXT = 'Time limit reached. What was written is kept; send a new message to continue.'
+/** The status line for a run. A run that hit its time limit says so, whether it ended stopped or interrupted. */
+export const stateText = (run: AgentRun) =>
+  run.error_code === 'deadline_exceeded' && (run.state === 'CANCELLING' || run.state === 'CANCELLED' || run.state === 'INTERRUPTED')
+    ? DEADLINE_TEXT
+    : STATE_LABEL[run.state]
+export const decisionText =(d: Decision) => REASON_TEXT[d.reason] ?? (d.decision === 'allowed' ? 'allowed' : `denied: ${d.reason}`)
 const isDone = (s: RunState) => RUN_TERMINAL.includes(s)
 const uid = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `r${Date.now()}${Math.random().toString(16).slice(2)}`)
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -110,6 +119,7 @@ export function AgentPage() {
   const [ledger, setLedger] = useState<LedgerPage>({ messages: [], summaries: [], children: [], summary_job: null, next_after: null })
   const [dialog, setDialog] = useState<{ kind: 'rename' | 'edit' | 'forget' | 'delete'; message?: LedgerMessage; requestId?: string } | null>(null)
   const [activity, setActivity] = useState<{ messages: LedgerMessage[]; next_cursor: string | null } | null>(null)
+  const [spend, setSpend] = useState<AgentSpend | null>(null)
   const selected = useRef<string | null>(null)
   const loadVersion = useRef(0)
   const follow = useRef<AbortController | null>(null)
@@ -126,6 +136,15 @@ export function AgentPage() {
     if (!alive.current || version !== loadVersion.current) return
     setSessions(list.sessions)
     if (selected.current === id && page) setLedger(page)
+  }, [])
+
+  const refreshSpend = useCallback(async () => {
+    try {
+      const s = await getAgentSpend()
+      if (alive.current) setSpend(s)
+    } catch {
+      /* the spending line is informational: hide it rather than block the chat */
+    }
   }, [])
 
   /** Attach to a run's stored events; reconnect from the last sequence number until the run is finished. */
@@ -164,6 +183,7 @@ export function AgentPage() {
           patch(runId, (t) => ({ ...t, run, lost: false }))
           if (isDone(run.state)) {
             await refreshLedger(selected.current)
+            void refreshSpend()
             return
           }
         } catch {
@@ -173,7 +193,7 @@ export function AgentPage() {
       }
       if (!ctl.signal.aborted) patch(runId, (t) => ({ ...t, lost: true }))
     },
-    [patch, refreshLedger],
+    [patch, refreshLedger, refreshSpend],
   )
 
   const loadSession = useCallback(
@@ -196,6 +216,7 @@ export function AgentPage() {
 
   useEffect(() => {
     alive.current = true
+    void refreshSpend()
     ;(async () => {
       try {
         const [healthResult, list] = await Promise.all([getRuntimeHealth(), listAgentSessions()])
@@ -221,7 +242,7 @@ export function AgentPage() {
       alive.current = false
       follow.current?.abort()
     }
-  }, [loadSession])
+  }, [loadSession, refreshSpend])
 
   useEffect(() => {
     bottom.current?.scrollIntoView?.({ block: 'end' })
@@ -334,6 +355,7 @@ export function AgentPage() {
         </p>
       )}
 
+      <SpendPanel spend={spend} />
       <details className="conversation-list" open>
         <summary>Conversations</summary>
         <nav aria-label="Conversations"><ul>{sessions.map((s) => <li key={s.id}><button type="button" className="ghost" aria-current={s.id === sessionId ? 'page' : undefined} onClick={() => openConversation(s.id)}>{s.title || 'Untitled conversation'} <span className="muted">· {s.actor_name ?? s.agent_actor_id}</span></button></li>)}</ul></nav>
@@ -376,9 +398,10 @@ export function AgentPage() {
                 )}
                 {text && <div className="bubble card">{text}</div>}
                 <p className="muted small agent-status" role="status">
-                  {t.lost ? 'Lost the connection to the live stream. Reload to see the latest.' : STATE_LABEL[t.run.state]}
+                  {t.lost ? 'Lost the connection to the live stream. Reload to see the latest.' : stateText(t.run)}
                   {t.run.state === 'FAILED' && t.run.error_code ? ` (${t.run.error_code})` : ''}
                 </p>
+                <RunCostLine cost={t.run.cost} />
                 {!isDone(t.run.state) && t.run.state !== 'CANCELLING' && (
                   <button type="button" className="stop" onClick={() => void cancel(t.run.id)}>
                     <IconStop size={14} /> Stop

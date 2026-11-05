@@ -141,6 +141,16 @@ export const connectCalendarUrl = (returnTo = '/#/integrations') =>
 // ---- Admin Hermes agent (see paw-server api/agent.py) ----
 export type RunState = 'QUEUED' | 'DISPATCHING' | 'RUNNING' | 'CANCELLING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED'
 export const RUN_TERMINAL: RunState[] = ['SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED']
+export interface RunCost {
+  status: 'unknown' | 'confirmed' | 'reserved' | 'unconfirmed'
+  confirmed_usd: string | null
+  reserved_usd: string | null // held and not yet settled
+  unconfirmed_usd: string | null // part of the held amount that may or may not have been billed
+  served_model: string | null
+  rate_versions: string[]
+}
+export interface SpendView { confirmed_usd: string; reserved_usd: string; unconfirmed_usd: string; limit_usd: string }
+export interface AgentSpend { day: string; resets_at: string; actor: SpendView; shared: SpendView }
 export interface AgentRun {
   id: string
   session_id: string
@@ -150,6 +160,7 @@ export interface AgentRun {
   output: string | null
   error_code: string | null
   usage: { input_tokens: number; output_tokens: number } | null
+  cost?: RunCost
   queued_at: string
   started_at: string | null
   finished_at: string | null
@@ -227,7 +238,8 @@ export const submitAgentRun = (sessionId: string, clientRequestId: string, messa
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_request_id: clientRequestId, message }),
   })
-export const getAgentRun = (runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}`)
+export const getAgentSpend = () => request<AgentSpend>('/v1/agent-spend')
+export const getAgentRun =(runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}`)
 export const cancelAgentRun = (runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}/cancel`, { method: 'POST' })
 
 /**
