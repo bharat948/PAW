@@ -2,11 +2,13 @@
 
 import threading
 from dataclasses import replace
+from decimal import Decimal
 from uuid import UUID
 
 import psycopg
 import pytest
 
+from paw_server.modules.costs import service as costs
 from paw_server.modules.gateway.builtin import builtin_specs
 from paw_server.modules.gateway.registry import ToolRegistry, sync_registry
 from paw_server.modules.gateway.service import GatewayService, redact_args
@@ -54,7 +56,11 @@ def gateway(h, calls, **kw) -> GatewayService:
     with h.pool.connection() as conn:
         sync_registry(conn, reg)
     settings = h.env.settings(
-        **{k: v for k, v in kw.items() if k in ("gateway_max_calls_per_run", "gateway_attestation")}
+        **{
+            k: v
+            for k, v in kw.items()
+            if k in ("gateway_max_calls_per_run", "gateway_attestation", "cost_shared_daily_usd")
+        }
     )
     extra = {k: v for k, v in kw.items() if k in ("connection_status", "attestation")}
     return GatewayService(h.pool, reg, settings, **extra)
@@ -67,7 +73,8 @@ def start_run(h, state="RUNNING"):
         claimed = lc.claim_next(conn, h.worker.runtime_id)
         prof = identity.get_active(conn, "admin-hermes")
         lc.bind_profile(conn, claimed["id"], profile_version_id=prof.version_id, version=prof.version,
-                        compiled_hash=prof.compiled.compiled_hash)  # fmt: skip
+                        compiled_hash=prof.compiled.compiled_hash,
+                        max_run_seconds=prof.compiled.policy["max_run_seconds"])  # fmt: skip
         if state == "RUNNING":
             lc.move(conn, claimed["id"], "RUNNING", hermes_run_id="h1")
         if state == "CANCELLING":
@@ -424,3 +431,92 @@ def test_gateway_and_worker_can_append_events_to_the_same_run_at_once_without_lo
             )
         ]
     assert seqs == list(range(1, len(seqs) + 1)) and len(seqs) >= 75
+
+
+# ---- budgets come from the cost ledger (A1-06) --------------------------------------------------------------------
+
+
+def spend(h, run, *, at_least="0.0000001", state="settled", actor=None):
+    """Ledger attempts for this run (or another actor) until their reservations reach `at_least`. Returns the total."""
+    total = Decimal(0)
+    with h.pool.connection() as conn:
+        r = conn.execute(
+            "SELECT r.id, r.session_id, r.executing_actor_id, r.profile_version_id, s.owner, s.workspace_id "
+            "FROM agent_runs r JOIN agent_sessions s ON s.id = r.session_id WHERE r.id = %s",
+            (run["id"],),
+        ).fetchone()
+        conn.commit()
+    while total < Decimal(at_least):
+        with h.pool.connection() as conn, conn.transaction():
+            a = costs.reserve(
+                conn, workspace=r["workspace_id"], owner=r["owner"], actor=actor or r["executing_actor_id"],
+                session=r["session_id"], profile=r["profile_version_id"], model="gpt-4o-mini", output=16000,
+                daily_cap=Decimal(1000), global_cap=Decimal(1000), run=run["id"], run_cap=Decimal(1000),
+            )  # fmt: skip
+            if state in ("settled", "uncertain"):
+                assert costs.forward(conn, a["id"])
+            if state == "uncertain":
+                costs.uncertain(conn, a["id"])
+            if state == "settled":
+                costs.settle(
+                    conn, a["id"], "gpt-4o-mini", {"prompt_tokens": 10, "completion_tokens": 16000}
+                )
+        total += a["reserved_usd"] if state != "settled" else Decimal("0.0096")
+    return total
+
+
+@pytest.mark.parametrize("state", ["settled", "reserved", "uncertain"])
+def test_the_run_budget_denies_once_spend_in_any_state_reaches_it(h, calls, state):
+    run = start_run(h)
+    g = gateway(h, calls)
+    assert g.handle_call("paw_system_status", {}).reason == "OK"
+    spend(h, run, at_least="0.50", state=state)  # the default per-run cap
+    out = g.handle_call("paw_system_status", {})
+    assert out.reason == "BUDGET_EXCEEDED" and len(calls.contexts) == 1
+
+
+def test_the_shared_cap_is_exact_to_the_last_micro_dollar(h, calls):
+    run = start_run(h)
+    total = spend(h, run, state="reserved")
+    below = gateway(h, calls, cost_shared_daily_usd=total + Decimal("0.000001"))
+    assert below.handle_call("paw_system_status", {}).reason == "OK"
+    at = gateway(h, calls, cost_shared_daily_usd=total)
+    assert at.handle_call("paw_system_status", {}).reason == "BUDGET_EXCEEDED"
+
+
+def test_another_actors_spend_counts_toward_shared_but_not_actor_or_run(h, calls):
+    run = start_run(h)
+    total = spend(h, run, state="reserved", actor="someone-else")
+    assert (
+        gateway(h, calls).handle_call("paw_system_status", {}).reason == "OK"
+    )  # far from every default cap
+    shared = gateway(h, calls, cost_shared_daily_usd=total)
+    assert shared.handle_call("paw_system_status", {}).reason == "BUDGET_EXCEEDED"
+
+
+def test_an_unreadable_ledger_denies_the_call(h, calls, monkeypatch):
+    start_run(h)
+    g = gateway(h, calls)
+
+    def broken(*a, **k):
+        raise RuntimeError("ledger down")
+
+    monkeypatch.setattr(costs, "totals", broken)
+    out = g.handle_call("paw_system_status", {})
+    assert out.reason == "BUDGET_EXCEEDED" and calls.contexts == []
+
+
+def test_a_run_past_its_deadline_gets_no_tool_calls(h, calls, env):
+    run = start_run(h)
+    g = gateway(h, calls)
+    assert g.handle_call("paw_system_status", {}).reason == "OK"
+    audit_before = len(audit(env))
+    with h.pool.connection() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET deadline_at = now() - interval '1 second' WHERE id = %s",
+            (run["id"],),
+        )
+        conn.commit()
+    out = g.handle_call("paw_system_status", {})
+    assert out.reason == "NO_ACTIVE_RUN" and len(calls.contexts) == 1
+    assert len(audit(env)) == audit_before + 1  # the denial is still audited

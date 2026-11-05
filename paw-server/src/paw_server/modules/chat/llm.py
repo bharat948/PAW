@@ -3,6 +3,7 @@
 import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
@@ -10,6 +11,14 @@ import httpx
 from paw_server.core.config import Settings
 
 Message = dict[str, str]
+
+
+@dataclass(frozen=True)
+class Completion:
+    text: str
+    model: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class LLMError(Exception):
@@ -87,6 +96,9 @@ class OpenAICompatLLM:
             raise LLMError("The language model rejected the request.")
 
     def complete(self, messages: list[Message], max_tokens: int) -> str:
+        return self.complete_with_usage(messages, max_tokens).text
+
+    def complete_with_usage(self, messages: list[Message], max_tokens: int) -> Completion:
         try:
             r = self._client.post(
                 "/chat/completions", json=self._payload(messages, max_tokens, False)
@@ -95,7 +107,14 @@ class OpenAICompatLLM:
             raise LLMError("The language model could not be reached.") from exc
         self._check(r)
         try:
-            return str(r.json()["choices"][0]["message"]["content"]).strip()
+            body = r.json()
+            usage = body.get("usage") or {}
+            return Completion(
+                str(body["choices"][0]["message"]["content"]).strip(),
+                str(body.get("model") or self.model),
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+            )
         except (KeyError, IndexError, ValueError) as exc:
             raise LLMError("The language model returned an unexpected response.") from exc
 

@@ -1,4 +1,4 @@
-.PHONY: install lint typecheck test test-integration check migrate run worker agent-worker gateway up down dev-infra dev-infra-down
+.PHONY: install lint typecheck test test-integration check migrate run worker agent-worker gateway session-worker up down dev-infra dev-infra-down
 install:
 	uv sync --frozen
 lint:
@@ -18,6 +18,8 @@ worker:  # ingestion worker, restarts on code changes
 	uv run watchfiles --filter python 'python -m paw_server.worker' src
 agent-worker:  # Admin Hermes run worker (needs PAW_HERMES_URL and PAW_HERMES_KEY in .env)
 	uv run watchfiles --filter python 'python -m paw_server.agent_worker' src
+session-worker:  # durable summaries and privacy maintenance
+	uv run watchfiles --filter python 'python -m paw_server.session_worker' src
 gateway:  # MCP tool gateway for Admin Hermes (needs PAW_GATEWAY_TOKEN)
 	uv run watchfiles --filter python 'python -m paw_server.gateway' src
 dev-infra:  # Postgres + S3 in Docker, published on localhost; app code runs on the host

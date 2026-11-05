@@ -126,3 +126,19 @@ def test_missing_policy_sections_deny_by_default():
     )  # a policy without budgets is broken
     no_limits = replace(RUN, policy={"grants": ["calendar_list_events"], "budgets": {}})
     assert decide(ok(active_runs=(no_limits,))).reason == "BUDGET_EXCEEDED"
+
+
+def test_a_limit_spent_is_named_and_decimals_compare_exactly():
+    from decimal import Decimal
+
+    spent = replace(RUN, cost_run_usd=Decimal("0.5"))
+    assert decide(ok(active_runs=(spent,))).detail == "run budget spent"
+    shared = replace(RUN, cost_shared_usd=Decimal("3"))
+    assert decide(ok(active_runs=(shared,))).detail == "shared daily budget spent"
+    assert decide(ok(active_runs=(replace(RUN, cost_run_usd=Decimal("0.499999")),))).reason == "OK"
+    assert (
+        decide(ok(active_runs=(replace(RUN, cost_unavailable=True),))).detail
+        == "accounting unavailable"
+    )
+    bad = replace(RUN, policy={**RUN.policy, "budgets": {"per_run_usd": "x", "daily_usd": 3}})
+    assert decide(ok(active_runs=(bad,))).detail == "malformed budget"

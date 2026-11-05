@@ -141,6 +141,16 @@ export const connectCalendarUrl = (returnTo = '/#/integrations') =>
 // ---- Admin Hermes agent (see paw-server api/agent.py) ----
 export type RunState = 'QUEUED' | 'DISPATCHING' | 'RUNNING' | 'CANCELLING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED'
 export const RUN_TERMINAL: RunState[] = ['SUCCEEDED', 'FAILED', 'CANCELLED', 'INTERRUPTED']
+export interface RunCost {
+  status: 'unknown' | 'confirmed' | 'reserved' | 'unconfirmed'
+  confirmed_usd: string | null
+  reserved_usd: string | null // held and not yet settled
+  unconfirmed_usd: string | null // part of the held amount that may or may not have been billed
+  served_model: string | null
+  rate_versions: string[]
+}
+export interface SpendView { confirmed_usd: string; reserved_usd: string; unconfirmed_usd: string; limit_usd: string }
+export interface AgentSpend { day: string; resets_at: string; actor: SpendView; shared: SpendView }
 export interface AgentRun {
   id: string
   session_id: string
@@ -150,6 +160,7 @@ export interface AgentRun {
   output: string | null
   error_code: string | null
   usage: { input_tokens: number; output_tokens: number } | null
+  cost?: RunCost
   queued_at: string
   started_at: string | null
   finished_at: string | null
@@ -164,6 +175,54 @@ export interface RuntimeHealth {
   ready: boolean
   missing: string[]
 }
+export interface AgentSession {
+  id: string; title: string; created_at: string; last_activity_at: string
+  agent_actor_id: string; requester_actor_id: string; actor_name?: string
+  kind: 'chat' | 'delegation'; forked_from_session_id: string | null; fork_seq: number | null
+  delegated_from_session_id: string | null; root_session_id: string
+}
+export interface LedgerMessage {
+  id: string; session_id: string; seq: number; kind: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'platform_event' | 'summary' | 'delegation'
+  author_actor_id: string; run_id: string | null; tool_invocation_id: string | null
+  status: 'complete' | 'unfinished'; created_at: string; body: string | null
+  data: Record<string, unknown> | null; forgotten: boolean; source_message_id: string | null
+}
+export interface LedgerPage {
+  messages: LedgerMessage[]; next_after: number | null
+  summaries: { id: string; from_seq: number; to_seq: number; message_id: string; invalidated_at: string | null; model: string }[]
+  children: AgentSession[]; summary_job: { state: string; error_code: string | null } | null
+}
+const jsonPost = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+export async function listAgentSessions(): Promise<{ sessions: AgentSession[] }> {
+  const sessions: AgentSession[] = []
+  let cursor: string | null = null
+  for (;;) {
+    const page: { sessions: AgentSession[]; next_cursor?: string | null } = await request(`/v1/agent-sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)
+    sessions.push(...page.sessions)
+    if (!page.next_cursor) return { sessions }
+    if (cursor === page.next_cursor) throw new ApiError(0, 'The conversation list could not be loaded.')
+    cursor = page.next_cursor
+  }
+}
+export const listAgentMessages = (id: string, after = 0) => request<LedgerPage>(`/v1/agent-sessions/${id}/messages?after=${after}&limit=200`)
+export async function allAgentMessages(id: string): Promise<LedgerPage> {
+  const messages: LedgerMessage[] = []
+  let after = 0
+  for (;;) {
+    const page = await listAgentMessages(id, after)
+    messages.push(...page.messages)
+    if (page.next_after === null) return { ...page, messages }
+    if (page.next_after <= after) throw new ApiError(0, 'The conversation could not be loaded.')
+    after = page.next_after
+  }
+}
+export const renameAgentSession = (id: string, title: string) => request<AgentSession>(`/v1/agent-sessions/${id}/rename`, jsonPost({ title }))
+export const forkAgentSession = (id: string, messageId: string, message: string, clientRequestId: string) =>
+  request<{ session: AgentSession; run: AgentRun }>(`/v1/agent-sessions/${id}/fork`, jsonPost({ message_id: messageId, message, client_request_id: clientRequestId }))
+export const forgetAgentMessage = (id: string, messageId: string) => request(`/v1/agent-sessions/${id}/messages/${messageId}/forget`, { method: 'POST' })
+export const deleteAgentSession = (id: string, includeDelegated: boolean) => request(`/v1/agent-sessions/${id}/delete`, jsonPost({ include_delegated: includeDelegated }))
+export const listAgentActivity = (cursor?: string) => request<{ messages: LedgerMessage[]; next_cursor: string | null }>(`/v1/agent-activity${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)
+
 export const getRuntimeHealth = () => request<RuntimeHealth>('/v1/runtime/health')
 export const createAgentSession = (title = '') =>
   request<{ id: string }>('/v1/agent-sessions', {
@@ -179,7 +238,8 @@ export const submitAgentRun = (sessionId: string, clientRequestId: string, messa
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_request_id: clientRequestId, message }),
   })
-export const getAgentRun = (runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}`)
+export const getAgentSpend = () => request<AgentSpend>('/v1/agent-spend')
+export const getAgentRun =(runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}`)
 export const cancelAgentRun = (runId: string) => request<AgentRun>(`/v1/agent-runs/${runId}/cancel`, { method: 'POST' })
 
 /**

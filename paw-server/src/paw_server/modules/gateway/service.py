@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -17,12 +18,14 @@ from psycopg_pool import ConnectionPool
 
 from paw_server.core.config import Settings
 from paw_server.modules.connectors import store as connector_store
+from paw_server.modules.costs import service as costs
 from paw_server.modules.gateway import attestation as att
 from paw_server.modules.gateway.policy import Decision, PolicyInput, RunBinding, decide
 from paw_server.modules.gateway.registry import ToolRegistry, enabled_tools, validate_arguments
 from paw_server.modules.gateway.shaping import ContinuationStore, shape
 from paw_server.modules.gateway.tools import ToolError
 from paw_server.modules.runtime import lifecycle as lc
+from paw_server.modules.sessions import service as ledger
 
 log = logging.getLogger("paw.gateway")
 OWNER = "owner"
@@ -108,11 +111,29 @@ class GatewayService:
                 "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.name = %s "
                 "JOIN agent_sessions s ON s.id = r.session_id "
                 "JOIN actor_compiled_profiles c ON c.profile_version_id = r.profile_version_id "
-                "WHERE r.state = ANY(%s)",
+                "WHERE r.state = ANY(%s) AND s.deleted_at IS NULL "
+                "AND (r.deadline_at IS NULL OR r.deadline_at > now())",
                 (self.settings.gateway_runtime, list(CALLABLE_STATES)),
             ).fetchall()
             conn.commit()
-        return list(rows)
+        return [self._with_costs(r) for r in rows]
+
+    def _with_costs(self, run: dict[str, Any]) -> dict[str, Any]:
+        """Spend so far from the cost ledger: this run, this actor today and everyone today. Unreadable = unavailable."""
+        try:
+            with self.pool.connection() as conn:
+                today = costs.day_at(datetime.now(UTC))
+                ws, actor = run["workspace_id"], run["executing_actor_id"]
+                spend = {
+                    "cost_run": costs.used(costs.totals(conn, ws, today, run=run["id"])),
+                    "cost_today": costs.used(costs.totals(conn, ws, today, actor=actor)),
+                    "cost_shared": costs.used(costs.totals(conn, ws, today)),
+                }
+                conn.commit()
+            return {**run, **spend, "cost_unavailable": False}
+        except Exception:
+            log.exception("gateway could not read spend", extra={"run_id": str(run["id"])})
+            return {**run, "cost_unavailable": True}
 
     # ---- the call ---------------------------------------------------------------------------------------------
     def handle_call(self, tool_name: str, args: Any, *, authenticated: bool = True) -> ToolOutcome:
@@ -124,6 +145,8 @@ class GatewayService:
             RunBinding(
                 run_id=str(r["id"]), actor_id=r["executing_actor_id"], profile_version=r["profile_version"] or 0,
                 policy=r["policy"], calls_so_far=r["calls"],
+                cost_run_usd=r.get("cost_run", 0), cost_today_usd=r.get("cost_today", 0),
+                cost_shared_usd=r.get("cost_shared", 0), cost_unavailable=r.get("cost_unavailable", False),
             )
             for r in runs
         )  # fmt: skip
@@ -141,13 +164,14 @@ class GatewayService:
         else:
             with self.pool.connection() as conn:
                 attestation = att.call_attestation(
-                    conn, run["hermes_run_id"], run["policy"].get("grants", [])
+                    conn, run["hermes_run_id"], run["policy"].get("grants", []), str(run["id"])
                 )
         decision = decide(
             PolicyInput(
                 authenticated=authenticated, active_runs=bindings, attestation=attestation, tool=spec,
                 tool_enabled=enabled, args_problems=problems, connection=connection,
                 max_calls_per_run=self.settings.gateway_max_calls_per_run,
+                shared_daily_usd=self.settings.cost_shared_daily_usd,
             )
         )  # fmt: skip
         ctx = (
@@ -160,20 +184,37 @@ class GatewayService:
             else None
         )  # fmt: skip
 
+        if run is not None:
+            try:
+                self._begin(invocation_id, run, tool_name, args)
+            except ToolError:
+                # Admission raced with completion or deletion; never execute the stale binding.
+                self._audit(
+                    invocation_id=invocation_id, run=None, tool=tool_name, spec=spec, args={},
+                    decision="denied", reason="RUN_INACTIVE", latency_ms=0, result_bytes=0,
+                    truncated=False, error=None, trace_id=trace_id,
+                )  # fmt: skip
+                return ToolOutcome(
+                    True,
+                    "The conversation is no longer active.",
+                    "denied",
+                    "RUN_INACTIVE",
+                    invocation_id,
+                )
         result_text, truncated, error = "", False, None
+        full_result: dict[str, Any] = {}
         final = decision
         if decision.allowed:
             assert spec is not None and ctx is not None
             try:
                 if spec.handler is None:
                     raise NotImplementedError("tool has no handler")
-                shaped = shape(
-                    tool_name, spec.handler(ctx, args), run_id=ctx.run_id, store=self.continuations
-                )
+                full_result = ledger.safe_data(spec.handler(ctx, args))
+                shaped = shape(tool_name, full_result, run_id=ctx.run_id, store=self.continuations)
                 result_text, truncated = shaped.text, shaped.truncated
             except ToolError as exc:  # a failure the tool chose to explain to the model
                 final = Decision(False, "TOOL_ERROR")
-                error = str(exc)[:200]
+                error = str(ledger.safe_data(str(exc)))[:200]
             except (
                 Exception
             ) as exc:  # a broken tool must never crash the gateway or leak internals to the model
@@ -186,11 +227,20 @@ class GatewayService:
         outcome_kind = (
             "allowed" if final.allowed else ("error" if final.reason in ERROR_REASONS else "denied")
         )
-        self._audit(
+        delivered = self._audit(
             invocation_id=invocation_id, run=run, tool=tool_name, spec=spec, args=args, decision=outcome_kind,
             reason=final.reason, latency_ms=latency_ms, result_bytes=len(result_text.encode()), truncated=truncated,
-            error=error, trace_id=trace_id,
+            error=error, trace_id=trace_id, result=full_result,
+            result_text=result_text if final.allowed else (f"The tool reported an error: {error}" if final.reason == "TOOL_ERROR" else VISIBLE_DENIAL.format(reason=final.reason)),
         )  # fmt: skip
+        if not delivered:
+            return ToolOutcome(
+                True,
+                "Result discarded because the conversation changed.",
+                "denied",
+                "CONTEXT_CHANGED",
+                invocation_id,
+            )
         if final.allowed:
             return ToolOutcome(False, result_text, "allowed", "OK", invocation_id)
         text = (
@@ -208,39 +258,113 @@ class GatewayService:
             run = None
             if kind == "blocked":
                 run = conn.execute(
-                    "SELECT id, executing_actor_id FROM agent_runs WHERE hermes_run_id = %s",
-                    (body.get("hermes_run_id"),),
+                    "SELECT id, session_id, executing_actor_id FROM agent_runs WHERE hermes_run_id = %s OR id::text = %s",
+                    (body.get("hermes_run_id"), body.get("hermes_run_id")),
                 ).fetchone()
                 conn.commit()
         if kind == "blocked":
+            invocation_id = uuid.uuid4()
+            if run is not None:
+                try:
+                    self._begin(invocation_id, run, str(body.get("tool_name")), {})
+                except ToolError:
+                    run = None
             self._audit(
-                invocation_id=uuid.uuid4(), run=run, tool=str(body.get("tool_name")), spec=None, args={},
+                invocation_id=invocation_id, run=run, tool=str(body.get("tool_name")), spec=None, args={},
                 decision="denied", reason="NATIVE_TOOL_BLOCKED", latency_ms=0, result_bytes=0, truncated=False,
                 error=None, trace_id=uuid.uuid4().hex,
             )  # fmt: skip
         return kind
 
+    def _begin(self, invocation_id: UUID, run: dict[str, Any], tool: str, args: Any) -> None:
+        with self.pool.connection() as conn, conn.transaction():
+            session = ledger.lock(conn, run["session_id"])
+            current = conn.execute(
+                "SELECT state FROM agent_runs WHERE id = %s FOR UPDATE", (run["id"],)
+            ).fetchone()
+            if (
+                session["deleted_at"] is not None
+                or current is None
+                or current["state"] in lc.TERMINAL
+            ):
+                raise ToolError("The conversation is no longer active.")
+            conn.execute(
+                "INSERT INTO gateway_tool_attempts (id, run_id, context_revision) VALUES (%s, %s, %s)",
+                (invocation_id, run["id"], session["context_revision"]),
+            )
+            ledger.append(
+                conn,
+                run["session_id"],
+                "tool_call",
+                run["executing_actor_id"],
+                tool,
+                run_id=run["id"],
+                invocation_id=invocation_id,
+                data={"tool": tool, "arguments": ledger.safe_data(redact_args(args))},
+            )
+
     def _audit(
         self, *, invocation_id: UUID, run: dict[str, Any] | None, tool: str, spec: Any, args: Any, decision: str,
         reason: str, latency_ms: int, result_bytes: int, truncated: bool, error: str | None, trace_id: str,
-    ) -> None:  # fmt: skip
+        result: dict[str, Any] | None = None, result_text: str = "",
+    ) -> bool:  # fmt: skip
         run_id = run["id"] if run else None
-        with self.pool.connection() as conn:
+        with self.pool.connection() as conn, conn.transaction():
+            redacted = False
+            if run is not None:
+                session = ledger.lock(conn, run["session_id"])
+                attempt = conn.execute(
+                    "SELECT context_revision FROM gateway_tool_attempts WHERE id = %s",
+                    (invocation_id,),
+                ).fetchone()
+                redacted = bool(
+                    session["deleted_at"] is not None
+                    or attempt is None
+                    or attempt["context_revision"] != session["context_revision"]
+                )
+                if redacted:
+                    args, result, result_text, error = (
+                        {},
+                        {},
+                        "[result discarded after conversation changed]",
+                        None,
+                    )
             conn.execute(
                 "INSERT INTO gateway_tool_invocations (id, run_id, actor_id, tool, tool_version, args_redacted, decision, "
                 "reason_code, latency_ms, result_bytes, truncated, error, trace_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     invocation_id, run_id, run["executing_actor_id"] if run else None, tool[:100],
-                    spec.version if spec else None, Jsonb(redact_args(args)), decision, reason, latency_ms,
+                    spec.version if spec else None, Jsonb(ledger.safe_data(redact_args(args))), decision, reason, latency_ms,
                     result_bytes, truncated, error, trace_id,
                 ),
             )  # fmt: skip
-            conn.commit()
-            if run_id is not None:
-                lc.append_event(
+            if run_id is not None and run is not None:
+                ledger.append(
+                    conn,
+                    run["session_id"],
+                    "tool_result",
+                    run["executing_actor_id"],
+                    result_text or VISIBLE_DENIAL.format(reason=reason),
+                    data={
+                        "tool": tool,
+                        "decision": decision,
+                        "reason": reason,
+                        "result": result or {},
+                        "redacted": redacted,
+                    },
+                    run_id=run_id,
+                    invocation_id=invocation_id,
+                )
+                current = conn.execute(
+                    "SELECT state FROM agent_runs WHERE id = %s FOR UPDATE", (run_id,)
+                ).fetchone()
+                if current is not None and current["state"] not in lc.TERMINAL:
+                    lc._insert_event(
                     conn, run_id, "tool.decision",
                     {"tool": tool[:100], "decision": decision, "reason": reason, "invocation_id": str(invocation_id),
                      "latency_ms": latency_ms, "truncated": truncated},
                     None,
                 )  # fmt: skip
+
+        return not redacted
