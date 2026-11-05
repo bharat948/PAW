@@ -8,7 +8,9 @@ services:
     image: paw-hermes:s0
     environment:
       API_SERVER_KEY: ${API_SERVER_KEY:?set API_SERVER_KEY (>= 32 random chars)}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      # No provider key in the runtime: model calls go through the PAW model proxy (PAW-002A A1).
+      PAW_MODEL_PROXY_URL: ${PAW_MODEL_PROXY_URL:?set PAW_MODEL_PROXY_URL (the PAW model proxy, ending in /v1)}
+      PAW_MODEL_PROXY_TOKEN: ${PAW_MODEL_PROXY_TOKEN:?set PAW_MODEL_PROXY_TOKEN}
       HERMES_CONFIG_SET: ${HERMES_CONFIG_SET:-}
       PAW_MCP_URL: ${PAW_MCP_URL:-}
       PAW_MCP_TOKEN: ${PAW_MCP_TOKEN:-${STUB_TOKEN:-}}

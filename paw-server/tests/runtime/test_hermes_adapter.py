@@ -65,6 +65,7 @@ def test_create_sends_key_bearer_and_body_and_returns_the_handle():
     assert seen["auth"] == "Bearer k" and seen["idem"] == "paw-1"
     assert seen["body"] == {
         "input": "hi",
+        "session_id": "paw-1",
         "instructions": "be brief",
         "conversation_history": [{"role": "user", "content": "a"}],
     }
@@ -72,7 +73,7 @@ def test_create_sends_key_bearer_and_body_and_returns_the_handle():
 
 def test_create_omits_optional_fields_and_reads_the_replayed_header():
     def h(req):
-        assert json.loads(req.content) == {"input": "hi"}
+        assert json.loads(req.content) == {"input": "hi", "session_id": "p"}
         return httpx.Response(202, json={"run_id": "R1"}, headers={"Idempotency-Replayed": "true"})
 
     assert adapter(h).create_run(run_id="p", input="hi").replayed is True

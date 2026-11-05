@@ -98,7 +98,10 @@ class HermesAdapter:
         instructions: str | None = None,
         history: list[dict[str, Any]] | None = None,
     ) -> RunHandle:
-        body: dict[str, Any] = {"input": input}
+        body: dict[str, Any] = {
+            "input": input,
+            "session_id": run_id,  # the PAW run id: stamped on every model call, so spend is attributed to this run
+        }
         if instructions is not None:
             body["instructions"] = instructions
         if history is not None:

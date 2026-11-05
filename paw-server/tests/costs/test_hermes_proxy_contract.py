@@ -1,4 +1,5 @@
-"""Pinned-runtime gate: fake provider only, no owner state or paid credentials.
+"""Pinned-runtime gate: fake provider only, no owner state or paid credentials. The runtime holds only a proxy
+token (no provider key) and runs the shipped paw-guard plugin, which stamps the run identity.
 Run with PAW_PROXY_CONTRACT=1. Requests must carry the explicit PAW session identity.
 """
 
@@ -7,6 +8,7 @@ import os
 import subprocess
 import threading
 import time
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
@@ -93,19 +95,7 @@ def test_pinned_runtime_proxy_contract(tmp_path):
     server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    plugin = tmp_path / "paw-guard"
-    plugin.mkdir()
-    (plugin / "plugin.yaml").write_text(
-        'name: paw-guard\nversion: "0.1"\ndescription: proxy contract fixture\n'
-    )
-    (plugin / "__init__.py").write_text("""
-def stamp(request, session_id="", **kw):
-    request = dict(request)
-    request["extra_headers"] = {**request.get("extra_headers", {}), "X-PAW-Run-ID": session_id}
-    return {"request": request}
-def register(ctx):
-    ctx.register_middleware("llm_request", stamp)
-""")
+    plugin = Path(__file__).parents[3] / "deploy/hermes/plugins/paw-guard/__init__.py"  # the shipped plugin
     name = "paw-a1-contract-" + uuid4().hex[:10]
     api_key = uuid4().hex + uuid4().hex
     try:
@@ -124,9 +114,11 @@ def register(ctx):
                 "-e",
                 f"API_SERVER_KEY={api_key}",
                 "-e",
-                f"OPENAI_API_KEY={key}",
+                f"PAW_MODEL_PROXY_URL=http://host.docker.internal:{server.server_port}/v1",
                 "-e",
-                f"HERMES_CONFIG_SET=model.provider=custom;model.base_url=http://host.docker.internal:{server.server_port}/v1;model.default=gpt-4o-mini;model.api_key={key};agent.max_turns=2",
+                f"PAW_MODEL_PROXY_TOKEN={key}",
+                "-e",
+                f"HERMES_CONFIG_SET=model.provider=custom;model.base_url=http://host.docker.internal:{server.server_port}/v1;model.default=gpt-4o-mini;agent.max_turns=2",
                 "paw-hermes:s0",
             ],
             check=True,
@@ -136,7 +128,7 @@ def register(ctx):
             [
                 "docker",
                 "cp",
-                str(plugin / "__init__.py"),
+                str(plugin),
                 f"{name}:/opt/paw-plugins/paw-guard/__init__.py",
             ],
             check=True,

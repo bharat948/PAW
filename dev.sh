@@ -11,6 +11,7 @@ cd "$(dirname "$0")"
 HERMES_ENV="${PAW_HERMES_ENV:-$HOME/.config/paw/s0.env}"          # secrets: OpenAI key, Hermès API key (outside the repo)
 HERMES_GEN="$HOME/.config/paw/hermes.generated.env"               # compiled from the active profile at every start
 GATEWAY_TOKEN_FILE="$HOME/.config/paw/gateway.token"
+PROXY_TOKEN_FILE="$HOME/.config/paw/model-proxy.token"                # the runtime's credential for the PAW model proxy
 HERMES_COMPOSE=(docker compose --env-file "$HERMES_ENV" -f deploy/hermes/compose.s0.yaml)
 [[ -f "$HERMES_GEN" ]] && HERMES_COMPOSE=(docker compose --env-file "$HERMES_ENV" --env-file "$HERMES_GEN" -f deploy/hermes/compose.s0.yaml)
 
@@ -36,6 +37,10 @@ start_hermes() {
   if ! docker image inspect paw-hermes:s0 >/dev/null 2>&1; then echo "hermes: image paw-hermes:s0 not built (deploy/hermes/README.md step 1), skipping"; return; fi
   if [[ ! -f "$HERMES_ENV" ]]; then echo "hermes: $HERMES_ENV missing (deploy/hermes/README.md step 2), skipping"; return; fi
   if [[ ! -f "$GATEWAY_TOKEN_FILE" ]]; then (umask 077; openssl rand -hex 24 > "$GATEWAY_TOKEN_FILE"); fi
+  if [[ ! -f "$PROXY_TOKEN_FILE" ]]; then (umask 077; openssl rand -hex 24 > "$PROXY_TOKEN_FILE"); fi
+  # The provider key stays on the host (the PAW gateway process); the Hermès container only gets the proxy token.
+  export PAW_MODEL_PROXY_TOKEN="$(cat "$PROXY_TOKEN_FILE")" PAW_MODEL_PROXY_UPSTREAM_KEY="$(grep '^OPENAI_API_KEY=' "$HERMES_ENV" | cut -d= -f2-)"
+  export PAW_MODEL_PROXY_URL="http://host.docker.internal:8100/v1"
   export PAW_GATEWAY_TOKEN="$(cat "$GATEWAY_TOKEN_FILE")" PAW_GATEWAY_ATTESTATION=required PAW_GATEWAY_HOST="${PAW_GATEWAY_HOST:-0.0.0.0}"
   # 1. the gateway first: Hermès parks a tool server that is down at its start and never retries it
   (cd paw-server && make gateway 2>&1 | prefix gateway) & pids+=($!)
@@ -43,7 +48,8 @@ start_hermes() {
   # 2. the container's settings, compiled from the active profile (tool list, model, turn limit) and the gateway address
   ( umask 077
     { (cd paw-server && uv run python -m paw_server.profile_export)
-      echo "PAW_MCP_URL=http://host.docker.internal:8100/mcp"; echo "PAW_MCP_TOKEN=$PAW_GATEWAY_TOKEN"; } > "$HERMES_GEN" )
+      echo "PAW_MCP_URL=http://host.docker.internal:8100/mcp"; echo "PAW_MCP_TOKEN=$PAW_GATEWAY_TOKEN"
+      echo "PAW_MODEL_PROXY_TOKEN=$PAW_MODEL_PROXY_TOKEN"; } > "$HERMES_GEN" )
   HERMES_COMPOSE=(docker compose --env-file "$HERMES_ENV" --env-file "$HERMES_GEN" -f deploy/hermes/compose.s0.yaml)
   # 3. recreate so a profile change is applied (this is the "restart" the Profile page asks for)
   "${HERMES_COMPOSE[@]}" up -d --force-recreate hermes >/dev/null

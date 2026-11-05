@@ -142,7 +142,7 @@ class GatewayService:
         else:
             with self.pool.connection() as conn:
                 attestation = att.call_attestation(
-                    conn, run["hermes_run_id"], run["policy"].get("grants", [])
+                    conn, run["hermes_run_id"], run["policy"].get("grants", []), str(run["id"])
                 )
         decision = decide(
             PolicyInput(
@@ -235,8 +235,8 @@ class GatewayService:
             run = None
             if kind == "blocked":
                 run = conn.execute(
-                    "SELECT id, session_id, executing_actor_id FROM agent_runs WHERE hermes_run_id = %s",
-                    (body.get("hermes_run_id"),),
+                    "SELECT id, session_id, executing_actor_id FROM agent_runs WHERE hermes_run_id = %s OR id::text = %s",
+                    (body.get("hermes_run_id"), body.get("hermes_run_id")),
                 ).fetchone()
                 conn.commit()
         if kind == "blocked":

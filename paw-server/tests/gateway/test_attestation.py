@@ -428,14 +428,50 @@ def test_plugin_report_url_and_failures_never_raise(plugin, monkeypatch):
     plugin._send({"kind": "boot", "config_hash": "h"})
 
 
-def test_plugin_registers_both_hooks_and_the_boot_report(plugin, monkeypatch):
+def test_plugin_registers_both_hooks_the_middleware_and_the_boot_report(plugin, monkeypatch):
     hooks = []
-    ctx = type("Ctx", (), {"register_hook": lambda self, name, fn: hooks.append(name)})()
+    ctx = type(
+        "Ctx",
+        (),
+        {
+            "register_hook": lambda self, name, fn: hooks.append(name),
+            "register_middleware": lambda self, name, fn: hooks.append("middleware:" + name),
+        },
+    )()
     monkeypatch.setenv("PAW_CONFIG_HASH", "abc123")
     plugin.register(ctx)
-    assert hooks == ["pre_tool_call", "pre_api_request"]
+    assert hooks == ["middleware:llm_request", "pre_tool_call", "pre_api_request"]
     assert plugin.sent == [{"kind": "boot", "config_hash": "abc123"}]
     plugin.sent.clear()
     monkeypatch.delenv("PAW_CONFIG_HASH")
     plugin.register(ctx)
     assert plugin.sent == []
+
+
+def test_proxy_mode_gives_the_runtime_the_proxy_and_no_provider():
+    frag = {"model": "gpt-4o-mini", "max_iterations": 25, "mcp_include": ["docs_search"]}
+    lines = dict(
+        line.split("=", 1) for line in render(frag, proxy_url="http://host.docker.internal:8100/v1")
+    )
+    assert lines["HERMES_CONFIG_SET"] == (
+        "model.provider=custom;model.base_url=http://host.docker.internal:8100/v1;"
+        "model.default=gpt-4o-mini;agent.max_turns=25"
+    )
+    assert lines["PAW_MODEL_PROXY_URL"] == "http://host.docker.internal:8100/v1"
+    assert lines["PAW_CONFIG_HASH"] == config_hash(frag)
+    assert not any(
+        "KEY" in k or "TOKEN" in k for k in lines
+    )  # the credential never enters the export
+
+
+def test_plugin_stamps_the_run_id_on_every_model_request(plugin):
+    out = plugin._stamp({"model": "m", "extra_headers": {"X-Other": "1"}}, session_id="run-7")
+    assert out["request"]["extra_headers"] == {"X-Other": "1", "X-PAW-Run-ID": "run-7"}
+    assert plugin._stamp({"model": "m"})["request"]["extra_headers"] == {"X-PAW-Run-ID": ""}
+
+
+def test_a_report_keyed_by_the_paw_run_id_attests_the_run(h):
+    report(h, call_report(run_id="paw-run-1"))
+    with h.pool.connection() as conn:
+        assert att.call_attestation(conn, "hermes-side-id", GRANTS, "paw-run-1") == "ok"
+        assert att.call_attestation(conn, "hermes-side-id", GRANTS, "other") == "missing"
