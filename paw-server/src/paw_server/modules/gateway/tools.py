@@ -10,6 +10,7 @@ from psycopg_pool import ConnectionPool
 from paw_server.core.config import Settings
 from paw_server.db.readiness import check_ready
 from paw_server.modules.connectors.calendar_service import CalendarError, CalendarService
+from paw_server.modules.connectors.github_service import GitHubService
 from paw_server.modules.gateway.registry import ToolRegistry, ToolSpec
 from paw_server.modules.gateway.shaping import ContinuationStore
 from paw_server.modules.ingestion.embedding import Embedder
@@ -29,6 +30,7 @@ class ToolDeps:
     embedder: Embedder | None
     calendar: CalendarService | None
     continuations: ContinuationStore
+    github: GitHubService | None = None
 
 
 def make_continue_handler(store: ContinuationStore) -> Any:
@@ -180,9 +182,13 @@ def attach_handlers(registry: ToolRegistry, deps: ToolDeps) -> ToolRegistry:
         "paw_continue": _continue, "paw_system_status": _system_status, "paw_run_status": _run_status,
         "docs_search": _docs_search, "docs_get_source": _docs_get_source, "calendar_list_events": _calendar_events,
     }  # fmt: skip
+    from paw_server.modules.gateway.github_tools import github_specs
+
+    github = {s.name: s.handler for s in github_specs(deps.github)}
     specs: list[ToolSpec] = []
     for name in registry.names():
         spec = registry.get(name)
         assert spec is not None
-        specs.append(replace(spec, handler=factories[name](deps)) if name in factories else spec)
+        handler = factories[name](deps) if name in factories else github.get(name, spec.handler)
+        specs.append(replace(spec, handler=handler))
     return ToolRegistry(specs)

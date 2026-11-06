@@ -337,6 +337,7 @@ def test_the_report_endpoint_needs_the_runtime_credential(http):
 
 
 def test_the_report_endpoint_stores_valid_reports_and_rejects_bad_ones(http, h, env):
+    start_run(h)  # reports must belong to an active run on the authenticated runtime
     r = http.post("/internal/report", call_report())
     assert r.status_code == 200 and r.json() == {"ok": True, "kind": "call"}
     assert http.post("/internal/report", {"kind": "nope"}).status_code == 400

@@ -1,5 +1,6 @@
 """The built-in tool specs. Handlers are attached where they are implemented (see tools.py)."""
 
+from paw_server.modules.gateway.github_tools import github_specs
 from paw_server.modules.gateway.registry import ToolRegistry, ToolSpec
 
 NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -87,7 +88,7 @@ def builtin_specs() -> list[ToolSpec]:
             },
             provider="google_calendar",
         ),
-    ]
+    ] + github_specs()
 
 
 def builtin_registry() -> ToolRegistry:

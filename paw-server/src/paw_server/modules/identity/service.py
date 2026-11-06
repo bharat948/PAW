@@ -113,6 +113,10 @@ def activate(conn: Conn, actor_id: str, version_id: UUID, by: str) -> ActiveProf
             "UPDATE actor_profile_versions SET status = 'active', activated_at = now() WHERE id = %s",
             (version_id,),
         )
+        conn.execute(
+            "UPDATE agent_runtimes SET desired_profile_version_id=%s WHERE actor_id=%s",
+            (version_id, actor_id),
+        )
     active = get_active(conn, actor_id)
     assert active is not None
     return active
@@ -171,6 +175,8 @@ def authority_changes(old: ActorProfileSpec, new: ActorProfileSpec) -> list[str]
     changed: list[str] = []
     if sorted(old.tools.grants) != sorted(new.tools.grants):
         changed.append("tools")
+    if old.tools.resource_scopes != new.tools.resource_scopes:
+        changed.append("tool scopes")
     if old.budgets != new.budgets:
         changed.append("budgets")
     if old.runtime != new.runtime:

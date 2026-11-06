@@ -17,6 +17,7 @@ const LABELS: Record<string, string> = {
   'runtime.max_iterations': 'Max steps',
   'runtime.max_run_seconds': 'Max run seconds',
   'tools.grants': 'Tools',
+  'tools.resource_scopes': 'Repository access',
   'budgets.per_run_usd': 'Per-run budget (USD)',
   'budgets.daily_usd': 'Daily budget (USD)',
 }
@@ -33,6 +34,7 @@ function flatten(spec: ProfileSpec): Record<string, string> {
     'runtime.max_iterations': String(spec.runtime.max_iterations),
     'runtime.max_run_seconds': String(spec.runtime.max_run_seconds),
     'tools.grants': [...spec.tools.grants].sort().join(', '),
+    'tools.resource_scopes': Object.entries(spec.tools.resource_scopes ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([tool, repos]) => `${tool}: ${repos.length ? [...repos].sort().join(', ') : 'no repositories'}`).join('\n'),
     'budgets.per_run_usd': String(spec.budgets.per_run_usd),
     'budgets.daily_usd': String(spec.budgets.daily_usd),
   }

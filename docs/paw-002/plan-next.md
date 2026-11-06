@@ -1,6 +1,22 @@
 # Plan: finishing Story 2, and what comes after
 
-Updated 2026-11-04 for Bharat. 002B is implemented on `paw-002b-ledger`, with local 002B acceptance complete. [Coverage and evidence](implementation-002b.md). Other phase descriptions below retain their earlier baseline unless updated.
+Updated 2026-11-06 for Bharat. 002B is implemented, with local 002B acceptance complete. [Coverage and evidence](implementation-002b.md). A1-01 through A1-11 are also implemented on `paw-002a-cost-limits`; see [A1 status](plan-a1.md) and [operating guidance](operations-a1.md). The baseline below predates A1 unless explicitly updated.
+
+Later on 6 November, the local GitHub 002G flow passed a real Hermès README read
+and one owner-approved sandbox issue creation, with a denied replay and local
+disconnect/reconnect check. See [GitHub acceptance](plan-github.md). The next
+Story 2 feature slice is [memory v1](plan-memory-v1.md). The baseline table and
+older sequence below are historical; HTTPS remote access and the outside-network
+phone demo are still open.
+
+## Current scope clarification (6 November 2026)
+
+- Verify the real-provider flow and Google Calendar connection. Local implementation and fake-provider tests do not establish live connector acceptance.
+- Include GitHub: the 002G connector, live read and approval-gated sandbox issue path are now locally verified. GitHub webhook delivery waits for HTTPS remote access. This remains separate from the original M1 definition.
+- Owner confirmed: keep HTTPS remote access and the outside-network phone demo in the current scope, alongside local web acceptance. The hosted phone gate remains outstanding, not passed; A4 below describes the required work.
+- The generalist benchmark documents under `docs/benchmarks/hermes-generalist-v0.1/` belong to a separate future task. Preparing, implementing or running that benchmark is outside the current work. Story 2's own acceptance tests remain required.
+- The accepted development sequence is in [the actor runtime foundation design](plan-actor-foundation.md); it supersedes the older recommended sequence below.
+- The [runtime registry and credentials slice](plan-runtime-registry.md) is implemented and verified locally. Supervisor/container creation and delegation remain later work. See [runtime registry operations](operations-runtime-registry.md) for migration/restart activation.
 
 ## 0. Where we are
 

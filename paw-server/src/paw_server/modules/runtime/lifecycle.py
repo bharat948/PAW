@@ -33,7 +33,7 @@ STATE_FOR_TERMINAL_EVENT = {
 }
 EVENT_FOR_STATE = {v: k for k, v in STATE_FOR_TERMINAL_EVENT.items()}
 RUN_COLUMNS = (
-    "id, session_id, actor_id, executing_actor_id, client_request_id, user_message, state, hermes_run_id, requested_model, "
+    "id, session_id, actor_id, executing_actor_id, runtime_id, client_request_id, user_message, state, hermes_run_id, requested_model, "
     "tokens_in, tokens_out, cache_read, cache_write, error_code, output, queued_at, started_at, finished_at"
 )
 FIELDS = {
@@ -52,11 +52,16 @@ class AdmissionError(Exception):
 
 # ---- sessions -----------------------------------------------------------------------------------------------
 def create_session(
-    conn: Conn, *, owner: str, workspace_id: UUID, title: str = ""
+    conn: Conn,
+    *,
+    owner: str,
+    workspace_id: UUID,
+    title: str = "",
+    agent_actor_id: str = "admin-hermes",
 ) -> dict[str, Any]:
     row = conn.execute(
-        "INSERT INTO agent_sessions (owner, workspace_id, title) VALUES (%s, %s, %s) RETURNING *",
-        (owner, workspace_id, title[:200]),
+        "INSERT INTO agent_sessions (owner, workspace_id, title, agent_actor_id) VALUES (%s, %s, %s, %s) RETURNING *",
+        (owner, workspace_id, title[:200], agent_actor_id),
     ).fetchone()
     conn.commit()
     assert row is not None
@@ -197,10 +202,25 @@ def ensure_runtime(conn: Conn, name: str = "hermes") -> UUID:
 def claim_next(conn: Conn, runtime_id: UUID) -> dict[str, Any] | None:
     """Oldest queued run, if the runtime's lease is free. Concurrency is one run per runtime, enforced by the lease row."""
     with conn.transaction():
+        runtime = conn.execute(
+            "SELECT rt.actor_id FROM agent_runtimes rt JOIN actors a ON a.id=rt.actor_id "
+            "WHERE rt.id=%s AND rt.desired_state='running' AND a.status='active' FOR UPDATE OF a, rt SKIP LOCKED",
+            (runtime_id,),
+        ).fetchone()
+        if runtime is None:
+            return None
+        if conn.execute(
+            "SELECT 1 FROM agent_runs WHERE executing_actor_id=%s "
+            "AND state IN ('DISPATCHING','RUNNING','CANCELLING')",
+            (runtime["actor_id"],),
+        ).fetchone():
+            return None
         nxt = conn.execute(
             "SELECT s.id AS session_id, r.id FROM agent_runs r JOIN agent_sessions s ON s.id = r.session_id "
-            "WHERE r.state = 'QUEUED' AND s.deleted_at IS NULL ORDER BY r.queued_at, r.id "
-            "FOR UPDATE OF s SKIP LOCKED LIMIT 1"
+            "WHERE r.state = 'QUEUED' AND r.executing_actor_id=%s AND s.agent_actor_id=%s "
+            "AND s.deleted_at IS NULL ORDER BY r.queued_at, r.id "
+            "FOR UPDATE OF s SKIP LOCKED LIMIT 1",
+            (runtime["actor_id"], runtime["actor_id"]),
         ).fetchone()
         if nxt is None:
             return None

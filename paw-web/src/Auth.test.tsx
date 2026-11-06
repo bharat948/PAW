@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from './App'
@@ -93,6 +93,7 @@ it('sends the cookie on API calls (credentials include) without a bearer header'
   })
   render(<App />)
   await screen.findByRole('button', { name: /sign out/i })
+  await waitFor(() => expect(spy.mock.calls.some(([u]) => String(u).includes('/v1/documents'))).toBe(true))
   const docs = spy.mock.calls.find(([u]) => String(u).includes('/v1/documents'))!
   expect(docs[1]?.credentials).toBe('include')
   expect(new Headers(docs[1]?.headers).get('Authorization')).toBeNull()

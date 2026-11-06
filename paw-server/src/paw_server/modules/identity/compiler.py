@@ -76,7 +76,7 @@ def compile_profile(actor_id: str, version: int, spec: ActorProfileSpec) -> Comp
         "actor_id": actor_id,
         "profile_version": version,
         "grants": grants,
-        "resource_scopes": {},
+        "resource_scopes": spec.tools.resource_scopes,
         "budgets": spec.budgets.model_dump(),
         "max_run_seconds": spec.runtime.max_run_seconds,
     }

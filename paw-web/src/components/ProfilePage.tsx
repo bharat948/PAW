@@ -14,7 +14,7 @@ import { diffSpecs } from '../lib/specDiff'
 import { ErrorState } from './ErrorState'
 import { Loading } from './Loading'
 
-const CHANGE_LABEL: Record<string, string> = { tools: 'the tools it may use', budgets: 'its budgets', runtime: 'its model or run limits' }
+const CHANGE_LABEL: Record<string, string> = { tools: 'the tools it may use', 'tool scopes': 'the repositories it may access', budgets: 'its budgets', runtime: 'its model or run limits' }
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '')
 
 function saveError(e: unknown): string {
@@ -150,6 +150,14 @@ export function ProfilePage() {
             </label>
           ))}
         </fieldset>
+        {form.tools.grants.some(t => t.startsWith('github_')) && <div>
+          <h3>GitHub repository access</h3>
+          <ul>{form.tools.grants.filter(t => t.startsWith('github_')).map(t => {
+            const scopes = form.tools.resource_scopes?.[t]
+            return <li key={t}><code>{t}</code>: {scopes === undefined ? 'Selected repositories in the connection' : scopes.length ? scopes.join(', ') : 'No repositories permitted'}</li>
+          })}</ul>
+          <p className="muted">Issue creation is additionally restricted to the configured sandbox and requires approval.</p>
+        </div>}
 
         <div className="grid-2">
           <div>

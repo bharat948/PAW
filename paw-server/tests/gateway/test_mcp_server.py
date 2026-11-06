@@ -49,7 +49,7 @@ def run_async(coro):
 # ---- protocol, in memory ------------------------------------------------------------------------------------------
 
 
-def test_tools_list_returns_the_registry_with_strict_schemas_and_read_only_hints(service):
+def test_tools_list_returns_strict_schemas_and_accurate_side_effect_hints(service):
     svc, reg = service
 
     async def go():
@@ -60,7 +60,8 @@ def test_tools_list_returns_the_registry_with_strict_schemas_and_read_only_hints
     assert sorted(tools) == reg.names()
     for t in tools.values():
         assert t.input_schema["additionalProperties"] is False
-        assert t.annotations.read_only_hint is True and t.annotations.destructive_hint is False
+        assert t.annotations.read_only_hint is (reg.get(t.name).side_effect_class == "read")
+        assert t.annotations.destructive_hint is False
     assert tools["calendar_list_events"].input_schema["properties"]["days"]["maximum"] == 31
 
 

@@ -13,6 +13,7 @@ from paw_server.modules.auth import service as auth
 from paw_server.modules.auth.oidc import new_pkce
 from paw_server.modules.connectors import store
 from paw_server.modules.connectors.calendar_service import CalendarError, CalendarService
+from paw_server.modules.connectors.github_service import READ_TOOLS
 from paw_server.modules.connectors.google_calendar import ConnectorError
 
 log = logging.getLogger("paw.integrations")
@@ -70,6 +71,18 @@ def catalog(request: Request, actor: CurrentActor) -> dict[str, object]:
             "account_email": live.account_email,
             "connected_at": live.created_at.isoformat(),
         }
+    with st.pool.connection() as conn:
+        gh_live = store.get_live(conn, actor.id, "github")
+    gh: dict[str, object] = {"state": "available"}
+    if st.github is None:
+        gh = {"state": "unavailable", "reason": "The GitHub App connection needs to be configured."}
+    elif gh_live:
+        gh = {
+            "state": "connected" if gh_live.status == "active" else "needs_reauth",
+            "account_email": gh_live.account_email,
+            "connected_at": gh_live.created_at.isoformat(),
+            "repositories": gh_live.scopes,
+        }
     return {
         "integrations": [
             {
@@ -79,6 +92,15 @@ def catalog(request: Request, actor: CurrentActor) -> dict[str, object]:
                 "kind": "built_in",
                 "state": "connected",
                 "tools": [{"name": "docs_search", "access": "read"}],
+            },
+            {
+                "id": "github",
+                "name": "GitHub",
+                "description": "Read selected repositories. Issue creation requires your approval.",
+                "kind": "connector",
+                "tools": [{"name": name, "access": "read"} for name in READ_TOOLS]
+                + [{"name": "github_create_issue", "access": "write"}],
+                **gh,
             },
             {
                 "id": PROVIDER,

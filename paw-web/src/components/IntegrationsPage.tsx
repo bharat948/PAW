@@ -2,16 +2,25 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   ApiError,
   calendarEvents,
+  connectGitHub,
+  disconnectGitHub,
+  githubRepositories,
+  installGitHubUrl,
+  stepUpUrl,
+  type GitHubRepository,
   connectCalendarUrl,
   disconnectCalendar,
   listIntegrations,
   type CalendarEvent,
   type Integration,
 } from '../api/client'
+import { ApprovalInbox } from './ApprovalInbox'
 import { ErrorState } from './ErrorState'
 import { Loading } from './Loading'
 
 const CONNECT_ERRORS: Record<string, string> = {
+  github_failed: 'GitHub could not be connected. Check the selected account and repositories, then try again.',
+  github_finish: 'The App is installed. Choose Finish connecting to verify access in PAW.',
   cancelled: 'Connecting was cancelled. Nothing was changed.',
   expired: 'That connection attempt expired. Please try again.',
   failed: 'Google Calendar could not be connected. Please try again.',
@@ -130,6 +139,50 @@ function Card({ item, onChanged }: { item: Integration; onChanged: () => void })
   )
 }
 
+function GitHubCard({ item, onChanged }: { item: Integration; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [stepup, setStepup] = useState(false)
+  const [repos, setRepos] = useState<GitHubRepository[] | null>(null)
+  useEffect(() => {
+    if (item.state !== 'connected') return
+    let alive = true
+    githubRepositories().then(r => { if (alive) setRepos(r.repositories) }).catch(() => {
+      if (alive) setError('Repository access could not be verified. Reconnect if GitHub access has changed.')
+    })
+    return () => { alive = false }
+  }, [item.state, item.connected_at])
+  async function act(disconnect = false) {
+    setBusy(true)
+    setError(null)
+    try {
+      if (disconnect) await disconnectGitHub()
+      else await connectGitHub()
+      setRepos(null)
+      onChanged()
+    } catch (e) {
+      setStepup(e instanceof ApiError && e.envelope?.code === 'stepup_required')
+      setError(e instanceof ApiError ? e.message : 'GitHub could not be connected. Try again.')
+    } finally { setBusy(false) }
+  }
+  return (
+    <article className="card integration" aria-labelledby="int-github">
+      <header><h2 id="int-github">GitHub</h2><span className={`pill ${item.state === 'connected' ? 'ok' : ''}`}>{STATE_LABEL[item.state]}</span></header>
+      <p className="muted">Read the repositories you select. Creating an issue requires your approval.</p>
+      {item.account_email && <p>Account: <strong>{item.account_email}</strong></p>}
+      {item.state === 'unavailable' && <p className="muted">{item.reason}</p>}
+      {item.state === 'connected' && repos && <ul aria-label="Connected GitHub repositories">{repos.map(r => <li key={r.id}>{r.full_name} {r.private && <span className="pill">private</span>}</li>)}</ul>}
+      {error && <p role="alert" className="error-text">{error}</p>}
+      {stepup && <a className="btn primary" href={stepUpUrl('/#/integrations')}>Sign in again to confirm</a>}
+      {item.state !== 'unavailable' && <div className="actions">
+        {item.state !== 'connected' && <><a className="btn" href={installGitHubUrl()}>Select repositories in GitHub</a><button disabled={busy} onClick={() => act()}>{busy ? 'Connecting…' : 'Finish connecting'}</button></>}
+        {(item.state === 'connected' || item.state === 'needs_reauth') && <button disabled={busy} onClick={() => act(true)}>{busy ? 'Disconnecting…' : 'Disconnect'}</button>}
+      </div>}
+      {item.state === 'connected' && <p className="muted">Disconnect removes PAW’s saved connection. You can also remove the App’s access in GitHub settings.</p>}
+    </article>
+  )
+}
+
 export function IntegrationsPage() {
   const [items, setItems] = useState<Integration[] | null>(null)
   const [failed, setFailed] = useState(false)
@@ -155,10 +208,11 @@ export function IntegrationsPage() {
       ) : (
         <div className="integration-grid">
           {items.map((i) => (
-            <Card key={i.id} item={i} onChanged={load} />
+            i.id === 'github' ? <GitHubCard key={i.id} item={i} onChanged={load} /> : <Card key={i.id} item={i} onChanged={load} />
           ))}
         </div>
       )}
+      {items?.some(item => item.id === 'github' && item.state !== 'unavailable') && <ApprovalInbox />}
     </section>
   )
 }

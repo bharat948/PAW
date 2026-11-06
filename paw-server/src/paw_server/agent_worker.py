@@ -1,4 +1,4 @@
-"""Agent worker: runs queued Admin Hermes runs against the Hermes container, one at a time."""
+"""One actor-bound worker per registered Hermès runtime."""
 
 import logging
 import signal
@@ -7,8 +7,9 @@ import threading
 from paw_server.core.config import get_settings
 from paw_server.core.logging import configure_logging
 from paw_server.db.pool import create_pool
+from paw_server.modules.identity import service as identity
+from paw_server.modules.runtime import registry
 from paw_server.modules.runtime.agent_worker import AgentWorker
-from paw_server.modules.runtime.hermes_adapter import HermesAdapter
 
 log = logging.getLogger("paw.agent")
 
@@ -16,12 +17,22 @@ log = logging.getLogger("paw.agent")
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    if not (settings.hermes_url and settings.hermes_key):
-        log.error("PAW_HERMES_URL and PAW_HERMES_KEY are required for the agent worker")
-        raise SystemExit(2)
     pool = create_pool(settings)
     pool.open()
-    worker = AgentWorker(pool, HermesAdapter(settings.hermes_url, settings.hermes_key), settings)
+    with pool.connection() as conn:
+        identity.ensure_default_profile(conn)
+        if settings.agent_runtime_name == settings.gateway_runtime:
+            runtime_id = registry.bootstrap(conn, settings)
+        else:
+            row = conn.execute(
+                "SELECT id FROM agent_runtimes WHERE name=%s", (settings.agent_runtime_name,)
+            ).fetchone()
+            conn.commit()
+            if row is None:
+                raise registry.RegistryError("register the runtime before starting its worker")
+            runtime_id = row["id"]
+        runtime = registry.adapter(conn, runtime_id, settings)
+    worker = AgentWorker(pool, runtime, settings)
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())

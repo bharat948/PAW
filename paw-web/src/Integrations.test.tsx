@@ -109,3 +109,36 @@ it('shows a retryable error when the catalog cannot load', async () => {
   expect(await screen.findByText(/could not load integrations/i)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
 })
+
+it('finishes a GitHub connection with CSRF and shows verified repositories', async () => {
+  let connected = false
+  const github = () => ({ id: 'github', name: 'GitHub', kind: 'connector', state: connected ? 'connected' : 'available', tools: [], connected_at: connected ? '2026-11-06T00:00:00Z' : undefined })
+  const calls = api({
+    '/v1/integrations/github/connect': () => { connected = true; return Response.json({ connected: true }) },
+    '/v1/integrations/github/repositories': () => Response.json({ repositories: [{ id: 1, full_name: 'paw-space/paw-sandbox', private: true }] }),
+    ...base(cal()),
+    '/v1/integrations': () => Response.json({ integrations: [github()] }),
+    '/v1/approvals': () => Response.json({ approvals: [] }),
+  })
+  render(<App />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Finish connecting' }))
+  expect(await screen.findByText('paw-space/paw-sandbox')).toBeInTheDocument()
+  expect(calls.find(c => c.url.endsWith('/github/connect'))?.csrf).toBe('csrf-abc')
+})
+
+it('shows the exact approval and sends only its digest and decision', async () => {
+  let done = false
+  const payloads: unknown[] = []
+  const approval = { id: 'a1', actor_id: 'admin-hermes', repository: 'paw-space/paw-sandbox', state: 'PENDING', operation_state: null, args_hash: 'digest', expires_at: '2026-11-07T00:00:00Z', args: { title: 'Review this title', body: 'Exact issue body\n<script>untrusted</script>' } }
+  api({ ...base(cal()),
+    '/v1/integrations': () => Response.json({ integrations: [{ id: 'github', state: 'available', tools: [] }] }),
+    '/v1/approvals/a1/decide': init => { payloads.push(JSON.parse(String(init?.body))); done = true; return Response.json({ state: 'SUCCEEDED' }) },
+    '/v1/approvals': () => Response.json({ approvals: [{ ...approval, state: done ? 'APPROVED' : 'PENDING', operation_state: done ? 'SUCCEEDED' : null }] }),
+  })
+  render(<App />)
+  expect(await screen.findByText('Review this title')).toBeInTheDocument()
+  expect(screen.getByText(/Exact issue body/)).toHaveTextContent('<script>untrusted</script>')
+  await userEvent.click(screen.getByRole('button', { name: 'Approve and create issue' }))
+  await screen.findByText(/SUCCEEDED/)
+  expect(payloads).toEqual([{ args_hash: 'digest', approve: true }])
+})

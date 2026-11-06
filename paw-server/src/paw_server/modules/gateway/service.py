@@ -25,6 +25,7 @@ from paw_server.modules.gateway.registry import ToolRegistry, enabled_tools, val
 from paw_server.modules.gateway.shaping import ContinuationStore, shape
 from paw_server.modules.gateway.tools import ToolError
 from paw_server.modules.runtime import lifecycle as lc
+from paw_server.modules.runtime import registry as runtimes
 from paw_server.modules.sessions import service as ledger
 
 log = logging.getLogger("paw.gateway")
@@ -48,6 +49,7 @@ class ToolContext:
     workspace_id: UUID
     invocation_id: UUID
     trace_id: str
+    resource_scopes: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -88,8 +90,10 @@ class GatewayService:
         connection_status: ConnectionStatus | None = None,
         attestation: Callable[[UUID], str] | None = None,
         continuations: ContinuationStore | None = None,
+        approvals: Any = None,
     ) -> None:
         self.pool, self.registry, self.settings = pool, registry, settings
+        self.approvals = approvals
         self.continuations = continuations or ContinuationStore()
         self._connection_status = connection_status or self._db_connection_status
         self._attestation = (
@@ -102,18 +106,31 @@ class GatewayService:
             live = connector_store.get_live(conn, owner, provider)
         return live.status if live else None
 
-    def _active_runs(self) -> list[dict[str, Any]]:
+    def _active_runs(self, runtime: runtimes.RuntimeIdentity | None = None) -> list[dict[str, Any]]:
         with self.pool.connection() as conn:
+            if runtime is not None and (
+                runtime.purpose != "gateway" or not runtimes.valid(conn, runtime)
+            ):
+                conn.commit()
+                return []
             rows = conn.execute(
-                "SELECT r.id, r.session_id, r.executing_actor_id, r.profile_version, r.hermes_run_id, s.owner, s.workspace_id, "
+                "SELECT r.id, r.runtime_id, rt.name AS runtime_name, r.session_id, r.executing_actor_id, r.profile_version, r.profile_version_id, r.hermes_run_id, s.owner, s.workspace_id, "
                 "c.policy, (SELECT count(*) FROM gateway_tool_invocations i WHERE i.run_id = r.id) AS calls "
                 "FROM agent_runs r JOIN agent_run_leases l ON l.run_id = r.id "
-                "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.name = %s "
+                "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.id=r.runtime_id AND rt.actor_id=r.executing_actor_id "
                 "JOIN agent_sessions s ON s.id = r.session_id "
                 "JOIN actor_compiled_profiles c ON c.profile_version_id = r.profile_version_id "
-                "WHERE r.state = ANY(%s) AND s.deleted_at IS NULL "
+                "WHERE ((%s::uuid IS NOT NULL AND rt.id=%s) OR (%s::uuid IS NULL AND rt.name=%s)) "
+                "AND r.state = ANY(%s) AND s.deleted_at IS NULL "
+                "AND rt.desired_state='running' "
                 "AND (r.deadline_at IS NULL OR r.deadline_at > now())",
-                (self.settings.gateway_runtime, list(CALLABLE_STATES)),
+                (
+                    runtime.id if runtime else None,
+                    runtime.id if runtime else None,
+                    runtime.id if runtime else None,
+                    self.settings.gateway_runtime,
+                    list(CALLABLE_STATES),
+                ),
             ).fetchall()
             conn.commit()
         return [self._with_costs(r) for r in rows]
@@ -136,11 +153,18 @@ class GatewayService:
             return {**run, "cost_unavailable": True}
 
     # ---- the call ---------------------------------------------------------------------------------------------
-    def handle_call(self, tool_name: str, args: Any, *, authenticated: bool = True) -> ToolOutcome:
+    def handle_call(
+        self,
+        tool_name: str,
+        args: Any,
+        *,
+        authenticated: bool = True,
+        runtime: runtimes.RuntimeIdentity | None = None,
+    ) -> ToolOutcome:
         started = time.monotonic()
         trace_id, invocation_id = uuid.uuid4().hex, uuid.uuid4()
         spec = self.registry.get(tool_name)
-        runs = self._active_runs() if authenticated else []
+        runs = self._active_runs(runtime) if authenticated else []
         bindings = tuple(
             RunBinding(
                 run_id=str(r["id"]), actor_id=r["executing_actor_id"], profile_version=r["profile_version"] or 0,
@@ -164,12 +188,17 @@ class GatewayService:
         else:
             with self.pool.connection() as conn:
                 attestation = att.call_attestation(
-                    conn, run["hermes_run_id"], run["policy"].get("grants", []), str(run["id"])
+                    conn,
+                    run["hermes_run_id"],
+                    run["policy"].get("grants", []),
+                    str(run["id"]),
+                    runtime=run["runtime_name"],
                 )
         decision = decide(
             PolicyInput(
                 authenticated=authenticated, active_runs=bindings, attestation=attestation, tool=spec,
                 tool_enabled=enabled, args_problems=problems, connection=connection,
+                resource=str(args.get("repository", "")).lower() if spec and spec.provider == "github" and isinstance(args, dict) and tool_name != "github_list_repos" else None,
                 max_calls_per_run=self.settings.gateway_max_calls_per_run,
                 shared_daily_usd=self.settings.cost_shared_daily_usd,
             )
@@ -178,7 +207,7 @@ class GatewayService:
             ToolContext(
                 run_id=run["id"], session_id=run["session_id"], actor_id=run["executing_actor_id"],
                 requester=run["owner"], workspace_id=run["workspace_id"], invocation_id=invocation_id,
-                trace_id=trace_id,
+                trace_id=trace_id, resource_scopes=run["policy"].get("resource_scopes", {}).get(tool_name),
             )
             if run is not None
             else None
@@ -204,6 +233,18 @@ class GatewayService:
         result_text, truncated, error = "", False, None
         full_result: dict[str, Any] = {}
         final = decision
+        if (
+            decision.reason == "APPROVAL_REQUIRED"
+            and tool_name == "github_create_issue"
+            and self.approvals is not None
+            and run is not None
+        ):
+            try:
+                full_result = self.approvals.request(run, invocation_id, args)
+                shaped = shape(tool_name, full_result, run_id=run["id"], store=self.continuations)
+                result_text, truncated = shaped.text, shaped.truncated
+            except Exception:
+                final = Decision(False, "APPROVAL_UNAVAILABLE")
         if decision.allowed:
             assert spec is not None and ctx is not None
             try:
@@ -231,7 +272,7 @@ class GatewayService:
             invocation_id=invocation_id, run=run, tool=tool_name, spec=spec, args=args, decision=outcome_kind,
             reason=final.reason, latency_ms=latency_ms, result_bytes=len(result_text.encode()), truncated=truncated,
             error=error, trace_id=trace_id, result=full_result,
-            result_text=result_text if final.allowed else (f"The tool reported an error: {error}" if final.reason == "TOOL_ERROR" else VISIBLE_DENIAL.format(reason=final.reason)),
+            result_text=result_text if final.allowed or full_result else (f"The tool reported an error: {error}" if final.reason == "TOOL_ERROR" else VISIBLE_DENIAL.format(reason=final.reason)),
         )  # fmt: skip
         if not delivered:
             return ToolOutcome(
@@ -243,6 +284,8 @@ class GatewayService:
             )
         if final.allowed:
             return ToolOutcome(False, result_text, "allowed", "OK", invocation_id)
+        if full_result and final.reason == "APPROVAL_REQUIRED":
+            return ToolOutcome(False, result_text, "denied", final.reason, invocation_id)
         text = (
             f"The tool reported an error: {error}"
             if final.reason == "TOOL_ERROR"
@@ -250,16 +293,51 @@ class GatewayService:
         )
         return ToolOutcome(True, text, outcome_kind, final.reason, invocation_id)
 
-    def receive_report(self, body: Any) -> str:
+    def receive_report(self, body: Any, *, runtime: runtimes.RuntimeIdentity | None = None) -> str:
         """A report from the runtime's plugin. A blocked native tool call also becomes an audit row and a
         `tool.decision` event, so the chat shows it (Hermes itself emits no event for a blocked call)."""
         with self.pool.connection() as conn:
-            kind = att.record_report(conn, self.settings.gateway_runtime, body)
+            if runtime is not None:
+                if runtime.purpose != "gateway" or not runtimes.valid(conn, runtime):
+                    raise att.ReportError("runtime credential is no longer active")
+                if isinstance(body, dict) and body.get("kind") in ("call", "blocked"):
+                    hid = body.get("hermes_run_id")
+                    if not isinstance(hid, str) or not hid or len(hid) > 100:
+                        raise att.ReportError("invalid run reference")
+                    owned = conn.execute(
+                        "SELECT 1 FROM agent_runs WHERE runtime_id=%s AND "
+                        "(hermes_run_id=%s OR id::text=%s) AND state IN ('DISPATCHING','RUNNING')",
+                        (runtime.id, hid, hid),
+                    ).fetchone()
+                    if not owned:
+                        raise att.ReportError("report does not belong to this runtime")
+                conn.commit()
+            name = runtime.name if runtime else self.settings.gateway_runtime
+            kind = att.record_report(conn, name, body)
+            if kind == "boot":
+                profile = conn.execute(
+                    "SELECT c.config_fragment FROM agent_runtimes rt JOIN actor_compiled_profiles c "
+                    "ON c.profile_version_id=rt.desired_profile_version_id WHERE rt.name=%s",
+                    (name,),
+                ).fetchone()
+                matches = profile is not None and att.config_hash(
+                    profile["config_fragment"]
+                ) == body.get("config_hash")
+                conn.execute(
+                    "UPDATE agent_runtimes SET status=%s,last_health_at=now(),reported_hashes=%s WHERE name=%s",
+                    (
+                        "ready" if matches else "unready",
+                        Jsonb({"config_hash": body.get("config_hash")}),
+                        name,
+                    ),
+                )
+                conn.commit()
             run = None
             if kind == "blocked":
                 run = conn.execute(
-                    "SELECT id, session_id, executing_actor_id FROM agent_runs WHERE hermes_run_id = %s OR id::text = %s",
-                    (body.get("hermes_run_id"), body.get("hermes_run_id")),
+                    "SELECT r.id, r.session_id, r.executing_actor_id FROM agent_runs r JOIN agent_runtimes rt ON rt.id=r.runtime_id "
+                    "WHERE rt.name=%s AND (r.hermes_run_id = %s OR r.id::text = %s)",
+                    (name, body.get("hermes_run_id"), body.get("hermes_run_id")),
                 ).fetchone()
                 conn.commit()
         if kind == "blocked":

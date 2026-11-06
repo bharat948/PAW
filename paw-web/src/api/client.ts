@@ -120,6 +120,7 @@ export interface Integration {
   reason?: string
   account_email?: string
   connected_at?: string
+  repositories?: string[]
   tools: { name: string; access: 'read' | 'write' }[]
 }
 export interface CalendarEvent {
@@ -307,7 +308,7 @@ export interface ProfileSpec {
   }
   ethos: string[]
   runtime: { harness: 'hermes'; model: string; max_iterations: number; max_run_seconds: number }
-  tools: { grants: string[] }
+  tools: { grants: string[]; resource_scopes?: Record<string, string[]> }
   budgets: { per_run_usd: number; daily_usd: number }
 }
 export interface ProfileVersion {
@@ -656,3 +657,25 @@ export async function streamChat(
 export const clearAllData = () => request<{ documents_deleted: number }>('/v1/dev/data', { method: 'DELETE' })
 
 export const deleteDocument = (id: string) => request<void>(`/v1/documents/${id}`, { method: 'DELETE' })
+
+export interface GitHubRepository { id: number; full_name: string; private: boolean }
+export const connectGitHub = () => request<{ connected: boolean; repositories: GitHubRepository[] }>('/v1/integrations/github/connect', { method: 'POST' })
+export const githubRepositories = () => request<{ repositories: GitHubRepository[] }>('/v1/integrations/github/repositories')
+export const disconnectGitHub = () => request<void>('/v1/integrations/github', { method: 'DELETE' })
+export const installGitHubUrl = (returnTo = '/#/integrations') => `${API_BASE_URL}/v1/integrations/github/connect?return_to=${encodeURIComponent(returnTo)}`
+
+export interface Approval {
+  id: string
+  tool: string
+  actor_id: string
+  repository: string
+  args: { repository: string; title: string; body: string }
+  args_hash: string
+  state: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'INVALIDATED'
+  expires_at: string
+  operation_state: 'STARTED' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN' | null
+  result: { number?: number; url?: string } | null
+}
+export const listApprovals = () => request<{ approvals: Approval[] }>('/v1/approvals')
+export const decideApproval = (approval: Approval, approve: boolean) => request(`/v1/approvals/${approval.id}/decide`, { method: 'POST', body: JSON.stringify({ args_hash: approval.args_hash, approve }) })
+export const reconcileApproval = (id: string) => request(`/v1/approvals/${id}/reconcile`, { method: 'POST' })

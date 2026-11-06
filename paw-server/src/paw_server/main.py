@@ -7,10 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from paw_server import __version__
 from paw_server.api import (
     agent,
+    approvals,
     auth,
     chat,
     dev,
     documents,
+    github,
     health,
     integrations,
     profile,
@@ -24,6 +26,7 @@ from paw_server.core.ratelimit import SlidingWindowLimiter
 from paw_server.db.pool import create_pool
 from paw_server.modules.auth.oidc import GoogleIdentityProvider, IdentityProvider
 from paw_server.modules.chat.llm import LLM, build_llm
+from paw_server.modules.connectors.github_service import build_github
 from paw_server.modules.connectors.google_calendar import CalendarProvider, GoogleCalendarProvider
 from paw_server.modules.ingestion.embedding import Embedder, build_embedder
 from paw_server.modules.ingestion.storage import ObjectStore, build_store
@@ -68,6 +71,8 @@ def create_app(
             settings.google_client_id, settings.google_client_secret, identity=idp
         )
     app.state.calendar = calendar
+    app.state.github = build_github(app.state.pool, settings)
+    app.state.runtime_override = runtime
     if runtime is None and settings.hermes_url and settings.hermes_key:
         runtime = HermesAdapter(settings.hermes_url, settings.hermes_key)
     app.state.runtime = runtime
@@ -88,6 +93,8 @@ def create_app(
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(integrations.router)
+    app.include_router(github.router)
+    app.include_router(approvals.router)
     app.include_router(agent.router)
     app.include_router(profile.router)
     app.include_router(documents.router)

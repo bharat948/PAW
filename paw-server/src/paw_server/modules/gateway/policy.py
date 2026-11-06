@@ -113,7 +113,7 @@ def decide(p: PolicyInput) -> Decision:
         if p.connection != "active":
             return _deny("CONNECTION_REVOKED", p.tool.provider)
     scopes = run.policy.get("resource_scopes", {}).get(p.tool.name)
-    if scopes is not None and p.resource not in scopes:
+    if scopes is not None and p.resource not in scopes and p.tool.name != "github_list_repos":
         return _deny("OUT_OF_SCOPE")
     if run.calls_so_far >= p.max_calls_per_run:
         return _deny("RATE_LIMITED", f"{run.calls_so_far} calls in this run")

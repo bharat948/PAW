@@ -172,3 +172,9 @@ it('shows no restart warning when the container matches', async () => {
   await screen.findByLabelText('Title')
   expect(screen.queryByText(/older tool list or model/i)).not.toBeInTheDocument()
 })
+
+it('includes repository-access changes in the owner review', () => {
+  const a = spec({ tools: { grants: ['github_get_file'], resource_scopes: { github_get_file: ['paw-space/paw-sandbox'] } } })
+  const b = spec({ tools: { grants: ['github_get_file'], resource_scopes: { github_get_file: [] } } })
+  expect(diffSpecs(a, b)).toEqual([{ field: 'Repository access', before: 'github_get_file: paw-space/paw-sandbox', after: 'github_get_file: no repositories' }])
+})

@@ -10,6 +10,7 @@ from psycopg_pool import ConnectionPool
 
 from paw_server.core.config import Settings
 from paw_server.modules.costs import service as costs
+from paw_server.modules.gateway import attestation
 from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
 from paw_server.modules.runtime.protocol import AgentRuntime, RuntimeError_, RuntimeEvent
@@ -39,8 +40,14 @@ class AgentWorker:
         self._filters: dict[UUID, checkpoints.CheckpointStream] = {}
         with pool.connection() as conn:
             privacy.replay(conn, Journal(settings.deletion_journal_dir))
-            self.runtime_id = lc.ensure_runtime(conn)
             identity.ensure_default_profile(conn)
+            row = conn.execute(
+                "SELECT id FROM agent_runtimes WHERE name=%s", (settings.agent_runtime_name,)
+            ).fetchone()
+            if row is None and settings.agent_runtime_name != "hermes":
+                raise ValueError("register the runtime before starting its worker")
+            self.runtime_id = row["id"] if row else lc.ensure_runtime(conn)
+            conn.commit()
 
     def recover(self) -> int:
         with self.pool.connection() as conn:
@@ -143,6 +150,19 @@ class AgentWorker:
         """Claim and fully process one run. False when there was nothing to do."""
         with self.pool.connection() as conn:
             privacy.replay(conn, Journal(self.settings.deletion_journal_dir))
+            if self.settings.gateway_attestation == "required":
+                row = conn.execute(
+                    "SELECT actor_id,name FROM agent_runtimes WHERE id=%s", (self.runtime_id,)
+                ).fetchone()
+                active = identity.get_active(conn, row["actor_id"]) if row else None
+                if (
+                    active is None
+                    or attestation.runtime_status(
+                        conn, row["name"], active.compiled.config_fragment
+                    ).state
+                    != "matches"
+                ):
+                    return False
             run = lc.claim_next(conn, self.runtime_id)
         if run is None:
             return False

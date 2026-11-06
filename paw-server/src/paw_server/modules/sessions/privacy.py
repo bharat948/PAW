@@ -95,7 +95,7 @@ def _hide_active(conn: Conn, session_ids: list[UUID]) -> list[str]:
             )
             lc._insert_event(conn, r["id"], "run.state", {"state": "CANCELLING"}, None)
         if r["hermes_run_id"]:
-            runtime_ids.append(r["hermes_run_id"])
+            runtime_ids.append(str(r["id"]))
     return runtime_ids
 
 
@@ -200,6 +200,14 @@ def apply(conn: Conn, receipt: Receipt, *, force: bool = False) -> list[str]:
     _redact_ids(conn, [s["message_id"] for s in summaries], receipt.requested_by)
     conn.execute(
         "UPDATE agent_summaries SET invalidated_at=now() WHERE session_id=ANY(%s) AND invalidated_at IS NULL",
+        (sessions,),
+    )
+    conn.execute(
+        "UPDATE approval_operations SET result='{}'::jsonb WHERE approval_id IN (SELECT id FROM approval_requests WHERE session_id=ANY(%s))",
+        (sessions,),
+    )
+    conn.execute(
+        "UPDATE approval_requests SET args='{}'::jsonb,state=CASE WHEN state='PENDING' THEN 'INVALIDATED' ELSE state END WHERE session_id=ANY(%s)",
         (sessions,),
     )
     conn.execute(
@@ -381,14 +389,12 @@ def purge_due(conn: Conn) -> int:
         conn.execute("DELETE FROM agent_session_messages WHERE session_id=ANY(%s)", (ids,))
         conn.execute("DELETE FROM agent_summary_usage WHERE session_id=ANY(%s)", (ids,))
         conn.execute("DELETE FROM agent_session_jobs WHERE session_id=ANY(%s)", (ids,))
-        hids = [
-            r["hermes_run_id"]
-            for r in conn.execute(
-                "SELECT hermes_run_id FROM agent_runs WHERE id=ANY(%s)", (runs,)
-            ).fetchall()
-            if r["hermes_run_id"]
-        ]
-        conn.execute("DELETE FROM runtime_reports WHERE hermes_run_id=ANY(%s)", (hids,))
+        conn.execute(
+            "DELETE FROM runtime_reports report USING agent_runs r, agent_runtimes rt "
+            "WHERE r.id=ANY(%s) AND rt.id=r.runtime_id AND report.runtime_name=rt.name "
+            "AND (report.hermes_run_id=r.hermes_run_id OR report.hermes_run_id=r.id::text)",
+            (runs,),
+        )
         conn.execute("DELETE FROM agent_run_redactions WHERE run_id=ANY(%s)", (runs,))
         conn.execute("DELETE FROM gateway_tool_invocations WHERE run_id=ANY(%s)", (runs,))
         conn.execute("DELETE FROM gateway_tool_attempts WHERE run_id=ANY(%s)", (runs,))

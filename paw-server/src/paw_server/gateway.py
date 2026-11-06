@@ -7,8 +7,10 @@ import uvicorn
 from paw_server.core.config import get_settings
 from paw_server.core.logging import configure_logging
 from paw_server.db.pool import create_pool
+from paw_server.modules.approvals.service import ApprovalService
 from paw_server.modules.auth.oidc import GoogleIdentityProvider
 from paw_server.modules.connectors.calendar_service import CalendarService
+from paw_server.modules.connectors.github_service import build_github
 from paw_server.modules.connectors.google_calendar import GoogleCalendarProvider
 from paw_server.modules.costs import tokens
 from paw_server.modules.costs.proxy import ModelProxy
@@ -40,11 +42,18 @@ def main() -> None:
             settings.google_client_id, settings.google_client_secret, identity=idp
         )
         calendar = CalendarService(pool, provider, settings.connector_key)
-    deps = ToolDeps(pool, settings, build_embedder(settings), calendar, store)
+    github = build_github(pool, settings)
+    deps = ToolDeps(pool, settings, build_embedder(settings), calendar, store, github)
     registry = attach_handlers(builtin_registry(), deps)
     with pool.connection() as conn:
         sync_registry(conn, registry)
-    service = GatewayService(pool, registry, settings, continuations=store)
+    service = GatewayService(
+        pool,
+        registry,
+        settings,
+        continuations=store,
+        approvals=ApprovalService(pool, github) if github else None,
+    )
     proxy = None
     if settings.model_proxy_token:
         with pool.connection() as conn:

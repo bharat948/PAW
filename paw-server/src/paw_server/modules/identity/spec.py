@@ -40,6 +40,20 @@ class Runtime(_Strict):
 
 class Tools(_Strict):
     grants: list[str] = Field(default_factory=list, max_length=64)
+    resource_scopes: dict[str, list[str]] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("resource_scopes")
+    @classmethod
+    def _scopes(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        for tool, repositories in value.items():
+            if not TOOL_NAME.fullmatch(tool) or len(repositories) > 500:
+                raise ValueError("invalid tool scope")
+            if any(
+                not re.fullmatch(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9_.-]{1,100}", r)
+                for r in repositories
+            ):
+                raise ValueError("invalid repository scope")
+        return {k: sorted(set(r.lower() for r in v)) for k, v in value.items()}
 
     @field_validator("grants")
     @classmethod

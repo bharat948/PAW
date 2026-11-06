@@ -12,6 +12,7 @@ import json
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from paw_server.core.config import Settings
 from paw_server.modules.costs import service as costs
 from paw_server.modules.costs import tokens
 from paw_server.modules.costs.pricing import CostError, Rate
+from paw_server.modules.runtime import registry as runtimes
 
 log = logging.getLogger("paw.model_proxy")
 
@@ -94,17 +96,31 @@ class ModelProxy:
         )
 
     # ---- admission (blocking; runs in a worker thread) ------------------------------------------------------
-    def _resolve(self, conn: Any, run_id: UUID) -> dict[str, Any]:
+    def _resolve(
+        self, conn: Any, run_id: UUID, runtime: runtimes.RuntimeIdentity | None = None
+    ) -> dict[str, Any]:
+        if runtime is not None and (
+            runtime.purpose != "model" or not runtimes.valid(conn, runtime)
+        ):
+            raise ProxyDenied("run_not_active")
         row = conn.execute(
             "SELECT r.id, r.session_id, r.executing_actor_id, r.profile_version_id, s.owner, s.workspace_id, "
             "c.policy, c.config_fragment->>'model' AS model "
             "FROM agent_runs r JOIN agent_run_leases l ON l.run_id = r.id "
-            "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.name = %s "
+            "JOIN agent_runtimes rt ON rt.id = l.runtime_id AND rt.id=r.runtime_id AND rt.actor_id=r.executing_actor_id "
             "JOIN agent_sessions s ON s.id = r.session_id "
             "JOIN actor_compiled_profiles c ON c.profile_version_id = r.profile_version_id "
-            "WHERE r.id = %s AND r.state = ANY(%s) AND s.deleted_at IS NULL "
+            "WHERE ((%s::uuid IS NOT NULL AND rt.id=%s) OR (%s::uuid IS NULL AND rt.name=%s)) "
+            "AND rt.desired_state='running' AND r.id = %s AND r.state = ANY(%s) AND s.deleted_at IS NULL "
             "AND (r.deadline_at IS NULL OR r.deadline_at > now())",
-            (self.settings.gateway_runtime, run_id, list(CALLABLE_STATES)),
+            (
+                runtime.id if runtime else None,
+                runtime.id if runtime else None,
+                runtime.id if runtime else None,
+                self.settings.gateway_runtime,
+                run_id,
+                list(CALLABLE_STATES),
+            ),
         ).fetchone()
         conn.commit()
         if not row or not row["model"]:
@@ -144,7 +160,9 @@ class ModelProxy:
             out.pop("stream_options", None)
         return out, output, stream
 
-    def admit(self, run_header: str | None, raw: bytes) -> Admitted:
+    def admit(
+        self, run_header: str | None, raw: bytes, *, runtime: runtimes.RuntimeIdentity | None = None
+    ) -> Admitted:
         try:
             run_id = UUID(run_header or "")
         except ValueError:
@@ -157,7 +175,7 @@ class ModelProxy:
             raise ProxyDenied("unsupported_payload")
         try:
             with self.pool.connection() as conn:
-                run = self._resolve(conn, run_id)
+                run = self._resolve(conn, run_id, runtime)
                 model = run["model"]
                 if body.get("model") != model:
                     raise ProxyDenied("model_not_allowed")
@@ -247,7 +265,9 @@ class ModelProxy:
         try:
             raw = await self._read(scope, receive)
             header = dict(scope["headers"]).get(b"x-paw-run-id", b"").decode("latin-1")
-            admitted = await anyio.to_thread.run_sync(self.admit, header, raw)
+            admitted = await anyio.to_thread.run_sync(
+                partial(self.admit, header, raw, runtime=scope.get("paw_runtime"))
+            )
         except ProxyDenied as d:
             log.info("model call denied", extra={"code": d.code})
             return await self._deny(send, d)

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     # Admin Hermes runtime (PAW-002). Empty url or key = the agent endpoints answer 503 agent_unavailable.
     hermes_url: str = ""
     hermes_key: str = ""
+    agent_runtime_name: str = "hermes"  # one worker process per registered runtime
     agent_history_tokens: int = Field(default=24000, ge=256, le=100000)
     agent_tool_history_tokens: int = Field(default=2000, ge=64, le=8000)
     agent_summary_tokens: int = Field(default=1200, ge=128, le=8000)
@@ -74,11 +75,18 @@ class Settings(BaseSettings):
         ""  # empty resolves to XDG state; outside both DB and Hermes volumes
     )
     agent_queue_limit: int = Field(default=5, ge=1, le=100)  # queued runs across all sessions
-    # MCP gateway (PAW-002D): the only tool surface Hermes has. Internal listener, static bearer for the runtime.
+    # MCP gateway: internal listener; these tokens bootstrap the registered Admin runtime's hashed credentials.
     gateway_token: str = ""
     gateway_host: str = "127.0.0.1"
     gateway_port: int = Field(default=8100, ge=1, le=65535)
-    gateway_runtime: str = "hermes"  # which agent_runtimes row this credential authenticates
+    gateway_runtime: str = "hermes"  # Admin runtime registry name
+    # Single-owner GitHub App. Private-key contents never enter settings, rows or logs.
+    github_app_id: int = Field(default=0, ge=0)
+    github_app_slug: str = ""
+    github_account: str = ""
+    github_private_key_file: str = ""
+    github_sandbox_repository: str = ""
+    github_webhook_secret: str = ""
     gateway_max_calls_per_run: int = Field(default=40, ge=1)
     # off = do not require the runtime's attestation report (until the Hermes plugin reporter ships); required = fail closed
     gateway_attestation: Literal["off", "required"] = "off"

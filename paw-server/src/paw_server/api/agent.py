@@ -18,6 +18,7 @@ from paw_server.modules.costs.readiness import gateway_enforcement
 from paw_server.modules.gateway import attestation
 from paw_server.modules.identity import service as identity
 from paw_server.modules.runtime import lifecycle as lc
+from paw_server.modules.runtime import registry
 from paw_server.modules.runtime.protocol import TERMINAL_TYPES
 from paw_server.modules.sessions import privacy
 from paw_server.modules.sessions import service as ledger
@@ -31,6 +32,7 @@ MAX_STREAM_S = 3600.0
 
 class SessionIn(BaseModel):
     title: str = Field(default="", max_length=200)
+    agent_actor_id: str = Field(default="admin-hermes", min_length=1, max_length=100)
 
 
 class RunIn(BaseModel):
@@ -38,11 +40,20 @@ class RunIn(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
 
 
-def _need_runtime(request: Request) -> Any:
-    rt = request.app.state.runtime
-    if rt is None:
+def _need_runtime(request: Request, actor_id: str = identity.ADMIN) -> None:
+    if actor_id == identity.ADMIN and request.app.state.runtime is not None:
+        return
+    with request.app.state.pool.connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM agent_runtimes rt JOIN actors a ON a.id=rt.actor_id "
+            "WHERE rt.actor_id=%s AND a.kind='agent' AND a.status='active' AND rt.endpoint_url IS NOT NULL",
+            (actor_id,),
+        ).fetchone()
+        conn.commit()
+    if row is None:
+        if actor_id != identity.ADMIN:
+            raise ApiError(404)
         raise ApiError(503, "agent_unavailable", "Admin Hermes is not configured.")
-    return rt
 
 
 def _iso(v: Any) -> str | None:
@@ -103,6 +114,16 @@ def runtime_health(request: Request, actor: CurrentActor) -> dict[str, Any]:
         missing = missing + ["enforcement_" + p for p in gateway_enforcement(st.settings)]
     with st.pool.connection() as conn:
         identity.ensure_default_profile(conn)
+        registered = conn.execute(
+            "SELECT rt.desired_state,a.status FROM agent_runtimes rt JOIN actors a ON a.id=rt.actor_id "
+            "WHERE rt.name=%s",
+            (st.settings.gateway_runtime,),
+        ).fetchone()
+        if registered and (
+            registered["desired_state"] != "running" or registered["status"] != "active"
+        ):
+            missing = missing + ["runtime_disabled"]
+        conn.commit()
         active = identity.get_active(conn, identity.ADMIN)
         status = attestation.runtime_status(
             conn, st.settings.gateway_runtime, active.compiled.config_fragment if active else None
@@ -119,10 +140,24 @@ def runtime_health(request: Request, actor: CurrentActor) -> dict[str, Any]:
 
 @router.post("/v1/agent-sessions", status_code=201)
 def create_session(request: Request, actor: CurrentActor, body: SessionIn) -> dict[str, Any]:
-    _need_runtime(request)
+    _need_runtime(request, body.agent_actor_id)
     with request.app.state.pool.connection() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM actors a JOIN agent_runtimes rt ON rt.actor_id=a.id "
+            "JOIN actor_profile_versions p ON p.actor_id=a.id AND p.status='active' "
+            "WHERE a.id=%s AND a.kind='agent' AND a.status='active'",
+            (body.agent_actor_id,),
+        ).fetchone():
+            # Admin's first session may precede the worker's idempotent bootstrap.
+            if body.agent_actor_id != identity.ADMIN:
+                raise ApiError(404)
+        conn.commit()
         s = lc.create_session(
-            conn, owner=actor.id, workspace_id=actor.workspace_id, title=body.title
+            conn,
+            owner=actor.id,
+            workspace_id=actor.workspace_id,
+            title=body.title,
+            agent_actor_id=body.agent_actor_id,
         )
     return _session_out(s)
 
@@ -164,8 +199,8 @@ def submit_run(
     request: Request, actor: CurrentActor, session_id: UUID, body: RunIn, response: Response
 ) -> dict[str, Any]:
     """202 with the new run, or 200 with the existing one when the same client_request_id is sent again."""
-    _need_runtime(request)
-    _own_session(request, actor, session_id)
+    session = _own_session(request, actor, session_id)
+    _need_runtime(request, session["agent_actor_id"])
     st = request.app.state
     try:
         with st.pool.connection() as conn:
@@ -226,7 +261,6 @@ def get_run(request: Request, actor: CurrentActor, run_id: UUID) -> dict[str, An
 
 @router.post("/v1/agent-runs/{run_id}/cancel")
 def cancel_run(request: Request, actor: CurrentActor, run_id: UUID) -> dict[str, Any]:
-    rt = _need_runtime(request)
     st = request.app.state
     with st.pool.connection() as conn:
         privacy.replay(conn, Journal(st.settings.deletion_journal_dir))
@@ -237,6 +271,8 @@ def cancel_run(request: Request, actor: CurrentActor, run_id: UUID) -> dict[str,
         raise ApiError(409, "not_cancellable_yet", "The run is starting. Try again in a moment.")
     if outcome == "stopping" and hermes_id:
         try:
+            with st.pool.connection() as conn:
+                rt = registry.for_run(conn, run_id, st.settings, st.runtime_override)
             rt.stop_run(hermes_id)
         except (
             Exception
@@ -416,8 +452,8 @@ def rename_session(
 def fork_session(
     request: Request, actor: CurrentActor, session_id: UUID, body: ForkIn
 ) -> dict[str, Any]:
-    _need_runtime(request)
-    _own_session(request, actor, session_id)
+    session = _own_session(request, actor, session_id)
+    _need_runtime(request, session["agent_actor_id"])
     with request.app.state.pool.connection() as conn, conn.transaction():
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('agent:admission', 0))")
         try:
@@ -458,12 +494,20 @@ def fork_session(
 
 
 def _stop_private_runs(request: Request, runtime_ids: list[str]) -> None:
-    if request.app.state.runtime:
-        for hid in runtime_ids:
-            try:
-                request.app.state.runtime.stop_run(hid)
-            except Exception:
-                pass  # the cancel deadline and redaction fence remain active
+    st = request.app.state
+    # Privacy returns PAW run IDs, which remain unambiguous even when two containers use the same Hermes ID.
+    for rid in runtime_ids:
+        try:
+            with st.pool.connection() as conn:
+                row = conn.execute(
+                    "SELECT hermes_run_id FROM agent_runs WHERE id=%s", (UUID(rid),)
+                ).fetchone()
+                conn.commit()
+                rt = registry.for_run(conn, UUID(rid), st.settings, st.runtime_override)
+            if row and row["hermes_run_id"]:
+                rt.stop_run(row["hermes_run_id"])
+        except Exception:
+            pass  # the cancel deadline and redaction fence remain active
 
 
 @router.post("/v1/agent-sessions/{session_id}/messages/{message_id}/forget")

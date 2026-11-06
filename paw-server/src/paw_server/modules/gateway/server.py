@@ -1,19 +1,22 @@
 """The MCP endpoint Hermes talks to (streamable HTTP at /mcp). It only translates MCP into `GatewayService.handle_call`;
 all policy lives there. Requests without the runtime's bearer token get 401 before MCP is even parsed (002D-R01)."""
 
-import hmac
 import json
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import anyio
 import mcp.types as t
 from mcp.server import Server, ServerRequestContext
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken
 
 from paw_server.modules.costs.proxy import ModelProxy
 from paw_server.modules.gateway.attestation import ReportError
 from paw_server.modules.gateway.registry import ToolRegistry
 from paw_server.modules.gateway.service import GatewayService
+from paw_server.modules.runtime import registry as runtimes
 
 
 def build_mcp_server(service: GatewayService, registry: ToolRegistry) -> Server[Any]:
@@ -43,7 +46,13 @@ def build_mcp_server(service: GatewayService, registry: ToolRegistry) -> Server[
         ctx: ServerRequestContext[Any], params: t.CallToolRequestParams
     ) -> t.CallToolResult:
         outcome = await anyio.to_thread.run_sync(
-            service.handle_call, params.name, params.arguments or {}
+            partial(
+                service.handle_call,
+                params.name,
+                params.arguments or {},
+                runtime=ctx.request.scope.get("paw_runtime") if ctx.request else None,
+                authenticated=ctx.request is None or "paw_runtime" in ctx.request.scope,
+            )
         )
         return t.CallToolResult(
             content=[t.TextContent(type="text", text=outcome.text)], isError=outcome.is_error
@@ -80,13 +89,27 @@ def build_app(
     network placement are the access control."""
     if len(token) < 24:
         raise ValueError("PAW_GATEWAY_TOKEN must be at least 24 characters")
-    expected = f"Bearer {token}".encode()
     if proxy is not None and (len(proxy_token) < 24 or proxy_token == token):
         raise ValueError(
             "the model proxy token must be at least 24 characters and differ from the gateway token"
         )
-    proxy_expected = f"Bearer {proxy_token}".encode()
+    with service.pool.connection() as conn:
+        # Import the configured Admin tokens once; a revoked hash stays revoked on restart.
+        rid = runtimes.register(conn, service.settings.gateway_runtime, "admin-hermes")
+        runtimes.credential(conn, rid, "gateway", token)
+        if proxy is not None:
+            runtimes.credential(conn, rid, "model", proxy_token)
     inner = build_mcp_server(service, registry).streamable_http_app(host="0.0.0.0")
+
+    def authenticate(given: bytes, purpose: str) -> runtimes.RuntimeIdentity | None:
+        if not given.startswith(b"Bearer "):
+            return None
+        try:
+            value = given[7:].decode("ascii")
+        except UnicodeDecodeError:
+            return None
+        with service.pool.connection() as conn:
+            return runtimes.authenticate(conn, value, purpose)
 
     async def read_body(receive: Any, limit: int = 16 * 1024) -> bytes | None:
         body: bytes = b""
@@ -103,7 +126,9 @@ def build_app(
         try:
             if raw is None:
                 raise ReportError("too large")
-            kind = await anyio.to_thread.run_sync(service.receive_report, json.loads(raw))
+            kind = await anyio.to_thread.run_sync(
+                partial(service.receive_report, json.loads(raw), runtime=scope["paw_runtime"])
+            )
         except (ReportError, ValueError):
             return await _respond(send, 400, {"error": "bad report"})
         await _respond(send, 200, {"ok": True, "kind": kind})
@@ -127,13 +152,29 @@ def build_app(
                 # The model route has its own credential: the gateway token cannot spend, and this one cannot call tools.
                 if proxy is None or scope["path"] != "/v1/chat/completions":
                     return await _respond(send, 404, {"error": "not found"})
-                if not hmac.compare_digest(given, proxy_expected):
+                principal = await anyio.to_thread.run_sync(authenticate, given, "model")
+                if principal is None:
                     return await _respond(send, 401, {"error": "unauthorized"})
                 if scope["method"] != "POST":
                     return await _respond(send, 405, {"error": "method not allowed"})
-                return await proxy.handle(scope, receive, send)
-            if not hmac.compare_digest(given, expected):
+                return await proxy.handle({**scope, "paw_runtime": principal}, receive, send)
+            principal = await anyio.to_thread.run_sync(authenticate, given, "gateway")
+            if principal is None:
                 return await _respond(send, 401, {"error": "unauthorized"})
+            scope = {
+                **scope,
+                "paw_runtime": principal,
+                # Let the MCP transport enforce session ownership for POST, SSE GET and DELETE alike.
+                # It needs only stable identity, never the plaintext bearer value.
+                "user": AuthenticatedUser(
+                    AccessToken(
+                        token="",
+                        client_id=str(principal.credential_id),
+                        subject=str(principal.id),
+                        scopes=[],
+                    )
+                ),
+            }
             if scope["path"] == "/internal/report" and scope["method"] == "POST":
                 return await report(scope, receive, send)
         await inner(scope, receive, send)

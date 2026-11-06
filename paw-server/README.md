@@ -20,6 +20,9 @@ No manual SQL or hidden env files: migrations run via the one-shot `migrate` ser
 
 ## Development
 
+Runtime registration, separate credentials, and actor-bound workers are described
+in [runtime registry operations](../docs/paw-002/operations-runtime-registry.md).
+
 ```
 make install       # uv sync --frozen (lockfile-exact)
 make check         # lint + typecheck + unit tests (same commands CI runs)
@@ -134,3 +137,8 @@ Server-sent events: `retrieval` (query used, numbered sources, trace) -> `token`
 
 `PAW_LLM_PROVIDER=fake` (default) is an offline extractive stand-in so the whole flow is testable without a key; the Ask
 page labels it clearly. Anthropic or other providers plug in by implementing `modules/chat/llm.py::LLM`.
+
+GitHub App setup, selected-repository installation, exact-payload issue approvals,
+revocation and webhook operations are documented in
+[`operations-github.md`](../docs/paw-002/operations-github.md).
+Live acceptance status is tracked in [`plan-github.md`](../docs/paw-002/plan-github.md).
