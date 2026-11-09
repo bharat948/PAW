@@ -18,6 +18,7 @@ from paw_server.modules.identity.spec import DEFAULT_ADMIN_SPEC, ActorProfileSpe
 from paw_server.modules.ingestion.jobs import Conn
 
 ADMIN = "admin-hermes"
+VOICE = "voice-agent"
 
 
 class ProfileError(Exception):
@@ -153,21 +154,26 @@ def list_versions(conn: Conn, actor_id: str) -> list[dict[str, Any]]:
     return rows
 
 
-def ensure_default_profile(conn: Conn) -> None:
-    """First start: Admin Hermes gets version 1 (the default spec), activated. Never touches an existing history."""
+def ensure_profile(conn: Conn, actor_id: str, spec: ActorProfileSpec) -> None:
+    """First use: the actor gets version 1 (the given spec), activated. Never touches an existing history."""
     if conn.execute(
-        "SELECT 1 FROM actor_profile_versions WHERE actor_id = %s LIMIT 1", (ADMIN,)
+        "SELECT 1 FROM actor_profile_versions WHERE actor_id = %s LIMIT 1", (actor_id,)
     ).fetchone():
         conn.commit()
         return
     conn.commit()
     try:
-        v = create_version(conn, ADMIN, DEFAULT_ADMIN_SPEC, created_by="owner")
-        activate(conn, ADMIN, v["id"], by="owner")
+        v = create_version(conn, actor_id, spec, created_by="owner")
+        activate(conn, actor_id, v["id"], by="owner")
     except Exception:
         conn.rollback()
-        if get_active(conn, ADMIN) is None and not list_versions(conn, ADMIN):
+        if get_active(conn, actor_id) is None and not list_versions(conn, actor_id):
             raise  # lost a race to another process is fine; anything else is not
+
+
+def ensure_default_profile(conn: Conn) -> None:
+    """First start: Admin Hermes gets version 1 (the default spec), activated."""
+    ensure_profile(conn, ADMIN, DEFAULT_ADMIN_SPEC)
 
 
 def authority_changes(old: ActorProfileSpec, new: ActorProfileSpec) -> list[str]:

@@ -109,3 +109,33 @@ Hermès run IDs. All databases are disposable; these tests make no paid calls.
 The slice uses the existing Admin, gateway, cost and ledger regression suites as
 compatibility gates. Live model, Google Calendar, HTTPS and outside-network phone
 acceptance remain outstanding tasks, alongside the later GitHub connector.
+
+## Registering a voice runtime
+
+A runtime has a **kind**, fixed when it is first registered: `hermes` (the default, everything above) or
+`voice`. The kind decides which adapter the worker uses; a voice runtime is otherwise the same registry entry as
+any other, with its own actor, endpoint, secret reference and separate gateway and model credentials.
+
+Migration `0018` adds the `kind` column (existing runtimes become `hermes`; the database refuses to change it)
+and an inert `voice-agent` actor. Nothing else changes for an installation that never uses voice: the actor has no
+profile, no runtime and no credential.
+
+```sh
+uv run python -m paw_server.runtime_registry register \
+  --name voice --actor voice-agent --kind voice \
+  --url http://127.0.0.1:8650 --key-env PAW_VOICE_KEY
+```
+
+Registering a voice runtime creates and activates the actor's default profile (`DEFAULT_VOICE_SPEC`) on first use.
+That profile grants one tool, `calendar_list_events`, and no document access, because a voice agent speaks to third
+parties. Change grants deliberately through the profile; they are not widened by registration. A voice runtime can
+only belong to the `voice-agent` actor, and a runtime's kind must match its profile's harness.
+
+Limits of this slice: the voice **adapter and service are not built yet**. Until slice 2, a worker started for a
+voice runtime refuses with "no adapter for runtime kind 'voice'". Registering one also makes `voice-agent`
+selectable for owner chat sessions, whose runs stay queued with no worker. Do not register a voice runtime in a
+shared environment before slice 2.
+
+When `PAW_GATEWAY_ATTESTATION=required`, the gateway denies tool calls from runs with no matching runtime report,
+and the worker waits for a boot report before claiming. The voice service must therefore post the same
+`boot`/`call` reports as Hermès (slice 3); leave attestation `off` for voice development until then.

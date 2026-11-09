@@ -16,6 +16,8 @@ from paw_server.core.config import Settings
 from paw_server.modules.ingestion.jobs import Conn
 from paw_server.modules.runtime.hermes_adapter import HermesAdapter
 
+KINDS = ("hermes", "voice")
+
 
 class RegistryError(ValueError):
     pass
@@ -41,9 +43,13 @@ def register(
     *,
     endpoint_url: str | None = None,
     key_env: str | None = None,
+    kind: str | None = None,
 ) -> UUID:
+    """`kind` is fixed at first registration (None keeps an existing runtime's kind, or means hermes)."""
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", name):
         raise RegistryError("invalid runtime name")
+    if kind is not None and kind not in KINDS:
+        raise RegistryError("invalid runtime kind")
     if endpoint_url is not None:
         url = urlsplit(endpoint_url)
         if (
@@ -68,6 +74,9 @@ def register(
         ).fetchone()
         if old and old["actor_id"] != actor:
             raise RegistryError("runtime already belongs to another actor")
+        if old and kind is not None and old["kind"] != kind:
+            raise RegistryError("runtime kind cannot change")
+        kind = old["kind"] if old else (kind or "hermes")
         if old and (
             (endpoint_url is not None and old["endpoint_url"] != endpoint_url)
             or (key_env is not None and old["key_env"] != key_env)
@@ -77,15 +86,19 @@ def register(
             ).fetchone():
                 raise RegistryError("drain runtime before changing its endpoint")
         p = conn.execute(
-            "SELECT id FROM actor_profile_versions WHERE actor_id=%s AND status='active'", (actor,)
+            "SELECT id, spec->'runtime'->>'harness' AS harness FROM actor_profile_versions "
+            "WHERE actor_id=%s AND status='active'",
+            (actor,),
         ).fetchone()
+        if p and p["harness"] != kind:
+            raise RegistryError("profile harness does not match runtime kind")
         row = conn.execute(
-            "INSERT INTO agent_runtimes(name,actor_id,endpoint_url,key_env,desired_profile_version_id) "
-            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET "
+            "INSERT INTO agent_runtimes(name,actor_id,endpoint_url,key_env,desired_profile_version_id,kind) "
+            "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(name) DO UPDATE SET "
             "endpoint_url=coalesce(excluded.endpoint_url,agent_runtimes.endpoint_url), "
             "key_env=coalesce(excluded.key_env,agent_runtimes.key_env), "
             "desired_profile_version_id=excluded.desired_profile_version_id RETURNING id",
-            (name, actor, endpoint_url, key_env, p["id"] if p else None),
+            (name, actor, endpoint_url, key_env, p["id"] if p else None, kind),
         ).fetchone()
         assert row is not None
         return row["id"]  # type: ignore[no-any-return]
@@ -176,11 +189,14 @@ def bootstrap(conn: Conn, settings: Settings) -> UUID:
     return rid
 
 
-def adapter(conn: Conn, runtime_id: UUID, settings: Settings) -> HermesAdapter:
+def adapter(conn: Conn, runtime_id: UUID, settings: Settings) -> Any:
+    """The port implementation for a runtime, chosen by its kind. Both speak `protocol.AgentRuntime`."""
     row = conn.execute("SELECT * FROM agent_runtimes WHERE id=%s", (runtime_id,)).fetchone()
     conn.commit()
     if not row or not row["endpoint_url"] or not row["key_env"]:
         raise RegistryError("runtime endpoint is not configured")
+    if row["kind"] != "hermes":
+        raise RegistryError(f"no adapter for runtime kind {row['kind']!r}")
     key = (
         settings.hermes_key
         if row["actor_id"] == "admin-hermes" and row["key_env"] == "PAW_HERMES_KEY"

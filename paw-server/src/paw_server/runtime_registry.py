@@ -9,6 +9,8 @@ import os
 
 from paw_server.core.config import get_settings
 from paw_server.db.pool import create_pool
+from paw_server.modules.identity import service as identity
+from paw_server.modules.identity.spec import DEFAULT_VOICE_SPEC
 from paw_server.modules.runtime import registry
 
 
@@ -19,6 +21,11 @@ def main() -> None:
     )
     parser.add_argument("--name")
     parser.add_argument("--actor")
+    parser.add_argument(
+        "--kind",
+        choices=list(registry.KINDS),
+        help="runtime kind, fixed at first registration (default hermes)",
+    )
     parser.add_argument("--url")
     parser.add_argument("--key-env")
     parser.add_argument("--purpose", choices=["gateway", "model"])
@@ -28,6 +35,8 @@ def main() -> None:
         parser.error("--name is required")
     if args.command == "register" and not all((args.actor, args.url, args.key_env)):
         parser.error("register requires --actor, --url and --key-env")
+    if args.kind == "voice" and args.actor != identity.VOICE:
+        parser.error(f"a voice runtime belongs to the {identity.VOICE} actor")
     if args.command in ("rotate", "revoke") and not args.purpose:
         parser.error("--purpose is required")
     token = os.environ.get(args.token_env or "", "")
@@ -37,8 +46,17 @@ def main() -> None:
     with create_pool(settings) as pool, pool.connection() as conn:
         with conn.transaction():
             if args.command == "register":
+                if (
+                    args.kind == "voice"
+                ):  # opt-in: the actor has no profile until a voice runtime is wanted
+                    identity.ensure_profile(conn, identity.VOICE, DEFAULT_VOICE_SPEC)
                 registry.register(
-                    conn, args.name, args.actor, endpoint_url=args.url, key_env=args.key_env
+                    conn,
+                    args.name,
+                    args.actor,
+                    endpoint_url=args.url,
+                    key_env=args.key_env,
+                    kind=args.kind,
                 )
             elif args.command != "list":
                 row = conn.execute(
@@ -62,7 +80,7 @@ def main() -> None:
                         (rid,),
                     )
         rows = conn.execute(
-            "SELECT rt.id,rt.name,rt.actor_id,rt.desired_state,rt.status,rt.desired_profile_version_id,rt.last_health_at, "
+            "SELECT rt.id,rt.name,rt.kind,rt.actor_id,rt.desired_state,rt.status,rt.desired_profile_version_id,rt.last_health_at, "
             "ARRAY(SELECT purpose FROM runtime_credentials c WHERE c.runtime_id=rt.id AND c.revoked_at IS NULL ORDER BY purpose) AS credentials "
             "FROM agent_runtimes rt ORDER BY rt.name"
         ).fetchall()

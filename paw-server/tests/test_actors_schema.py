@@ -41,6 +41,11 @@ def test_seeded_actors(conn):
         ("admin-hermes", "agent", "Admin Hermès"),
         ("owner", "human", "Bharat"),
         ("system", "system", "PAW"),
+        (
+            "voice-agent",
+            "agent",
+            "Voice Agent",
+        ),  # inert until an operator registers a voice runtime (0018)
     ]
 
 
