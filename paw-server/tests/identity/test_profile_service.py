@@ -173,7 +173,8 @@ def test_a_run_records_its_profile_version_and_sends_the_compiled_instructions(h
     )[0]
     c = compile_profile(svc.ADMIN, 1, DEFAULT_ADMIN_SPEC)
     assert row[0] == 1 and row[1] == c.compiled_hash and row[2] is not None
-    assert harness.rt.created[0]["instructions"] == c.run_instructions
+    assert harness.rt.created[0]["instructions"].startswith(c.run_instructions + "\n\n")
+    assert "Task-oriented history" in harness.rt.created[0]["instructions"]
 
 
 def test_activating_a_new_version_changes_the_next_run_but_never_an_earlier_one(harness, env):
@@ -224,7 +225,12 @@ def test_a_run_binds_the_profile_only_once(harness, env):
     harness.worker.run_once()
     with harness.pool.connection() as conn:
         lc.bind_profile(
-            conn, UUID(run["id"]), profile_version_id=UUID(int=1), version=99, compiled_hash="x"
+            conn,
+            UUID(run["id"]),
+            profile_version_id=UUID(int=1),
+            version=99,
+            compiled_hash="x",
+            max_run_seconds=600,
         )
     assert sql(env, "SELECT profile_version FROM agent_runs WHERE id = %s", run["id"]) == [(1,)]
 

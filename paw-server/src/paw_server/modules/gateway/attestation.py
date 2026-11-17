@@ -73,14 +73,18 @@ def record_report(conn: Conn, runtime: str, body: Any) -> str:
     return str(kind)
 
 
-def call_attestation(conn: Conn, hermes_run_id: str | None, grants: list[str]) -> str:
-    """ok | missing | mismatch for a run, from its latest model-call report."""
-    if not hermes_run_id:
+def call_attestation(
+    conn: Conn, hermes_run_id: str | None, grants: list[str], paw_run_id: str | None = None
+) -> str:
+    """ok | missing | mismatch for a run, from its latest model-call report. The runtime reports under the
+    session id it was given, which is the PAW run id; the Hermes run id is still accepted."""
+    keys = [k for k in (hermes_run_id, paw_run_id) if k]
+    if not keys:
         return "missing"
     row = conn.execute(
-        "SELECT tool_names FROM runtime_reports WHERE kind = 'call' AND hermes_run_id = %s "
+        "SELECT tool_names FROM runtime_reports WHERE kind = 'call' AND hermes_run_id = ANY(%s) "
         "ORDER BY observed_at DESC LIMIT 1",
-        (hermes_run_id,),
+        (keys,),
     ).fetchone()
     conn.commit()
     if row is None:

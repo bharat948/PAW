@@ -18,7 +18,7 @@ from paw_server.modules.runtime.protocol import RunHandle, RunSnapshot, RuntimeE
 from paw_server.modules.runtime.sse import parse_frames
 
 KNOWN_STATUS = {
-    "started", "running", "waiting_for_approval", "stopping",
+    "queued", "started", "running", "waiting_for_approval", "stopping",
     "completed", "failed", "cancelled", "interrupted",
 }  # fmt: skip
 REQUIRED_FEATURES = ("run_submission", "run_status", "run_events_sse", "run_stop")
@@ -57,6 +57,8 @@ class HermesAdapter:
     def _check(r: httpx.Response) -> None:
         if r.status_code < 400:
             return
+        if r.status_code == 404:
+            raise RuntimeError_("not_found", "http 404")
         if r.status_code in (401, 403):
             raise RuntimeError_("auth", f"http {r.status_code}")
         if r.status_code == 429 or r.status_code >= 500:
@@ -96,7 +98,10 @@ class HermesAdapter:
         instructions: str | None = None,
         history: list[dict[str, Any]] | None = None,
     ) -> RunHandle:
-        body: dict[str, Any] = {"input": input}
+        body: dict[str, Any] = {
+            "input": input,
+            "session_id": run_id,  # the PAW run id: stamped on every model call, so spend is attributed to this run
+        }
         if instructions is not None:
             body["instructions"] = instructions
         if history is not None:

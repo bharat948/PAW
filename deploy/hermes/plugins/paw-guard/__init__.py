@@ -5,7 +5,9 @@
    | off (S0 baseline: allow all). Hermes fails CLOSED when a hook raises or times out (S0 finding).
 2. `pre_api_request` reports, on every model call, the exact tool names the call carries and the model. The gateway
    compares them with the active profile and denies tool calls from a run that does not match.
-3. At load it reports the hash of the compiled config the container was started with (PAW_CONFIG_HASH).
+3. An `llm_request` middleware stamps `X-PAW-Run-ID` (the session id, which PAW sets to its own run id) on every model
+   request, so the PAW model proxy can attribute and budget the call. Verified on the pinned Hermes (A1-01).
+4. At load it reports the hash of the compiled config the container was started with (PAW_CONFIG_HASH).
 
 Reports are fire-and-forget on a thread with a short timeout and never raise: Hermes swallows errors in observer hooks,
 so a silent failure must look like "no report" to the gateway, which then fails closed. Stdlib only.
@@ -80,7 +82,14 @@ def _attest(**kw):
     return None
 
 
+def _stamp(request, session_id="", **kw):
+    request = dict(request)
+    request["extra_headers"] = {**(request.get("extra_headers") or {}), "X-PAW-Run-ID": str(session_id or "")}
+    return {"request": request}
+
+
 def register(ctx):
+    ctx.register_middleware("llm_request", _stamp)
     ctx.register_hook("pre_tool_call", _guard)
     ctx.register_hook("pre_api_request", _attest)
     h = os.environ.get("PAW_CONFIG_HASH", "")

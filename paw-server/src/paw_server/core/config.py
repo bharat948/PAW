@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -64,6 +65,14 @@ class Settings(BaseSettings):
     # Admin Hermes runtime (PAW-002). Empty url or key = the agent endpoints answer 503 agent_unavailable.
     hermes_url: str = ""
     hermes_key: str = ""
+    agent_history_tokens: int = Field(default=24000, ge=256, le=100000)
+    agent_tool_history_tokens: int = Field(default=2000, ge=64, le=8000)
+    agent_summary_tokens: int = Field(default=1200, ge=128, le=8000)
+    agent_summary_model: str = "gpt-4o-mini"
+    agent_recovery_deadline_s: float = Field(default=30, ge=0, le=300)
+    deletion_journal_dir: str = (
+        ""  # empty resolves to XDG state; outside both DB and Hermes volumes
+    )
     agent_queue_limit: int = Field(default=5, ge=1, le=100)  # queued runs across all sessions
     # MCP gateway (PAW-002D): the only tool surface Hermes has. Internal listener, static bearer for the runtime.
     gateway_token: str = ""
@@ -73,6 +82,19 @@ class Settings(BaseSettings):
     gateway_max_calls_per_run: int = Field(default=40, ge=1)
     # off = do not require the runtime's attestation report (until the Hermes plugin reporter ships); required = fail closed
     gateway_attestation: Literal["off", "required"] = "off"
+    # Model proxy (PAW-002A A1): every actor model call passes through the gateway listener's /v1 route, which
+    # reserves its worst-case cost first. The provider key lives only here. Empty token = proxy disabled.
+    model_proxy_token: str = (
+        ""  # distinct from gateway_token: a tool credential must not be able to spend
+    )
+    model_proxy_upstream_base: str = "https://api.openai.com/v1"
+    model_proxy_upstream_key: str = ""
+    model_proxy_timeout_s: float = Field(default=120.0, gt=0)
+    model_proxy_max_body_bytes: int = Field(default=4 * 1024 * 1024, ge=1024)
+    model_proxy_default_output_tokens: int = Field(default=4096, ge=16)
+    cost_shared_daily_usd: Decimal = Field(
+        default=Decimal(3), gt=0
+    )  # all actors together, per Asia/Kolkata day
     agent_stop_deadline_s: int = Field(
         default=30, ge=1
     )  # CANCELLING longer than this becomes INTERRUPTED
@@ -176,6 +198,15 @@ class Settings(BaseSettings):
         if self.llm_provider == "openai" and not (self.llm_api_key or self.embedding_api_key):
             raise ValueError(
                 "PAW_LLM_API_KEY (or PAW_EMBEDDING_API_KEY) is required for the openai LLM"
+            )
+        if self.model_proxy_token and (
+            len(self.model_proxy_token) < 24
+            or self.model_proxy_token == self.gateway_token
+            or not self.model_proxy_upstream_key
+        ):
+            raise ValueError(
+                "PAW_MODEL_PROXY_TOKEN needs at least 24 characters, must differ from PAW_GATEWAY_TOKEN, "
+                "and requires PAW_MODEL_PROXY_UPSTREAM_KEY"
             )
         if self.embedding_provider == "openai" and not self.embedding_api_key:
             raise ValueError("PAW_EMBEDDING_API_KEY is required for the openai provider")

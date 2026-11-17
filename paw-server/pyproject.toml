@@ -19,6 +19,7 @@ dependencies = [
   "cryptography>=50.0.2",
   "jsonschema>=4.26.0",
   "mcp>=2.3.0",
+  "tiktoken>=0.14.0",
 ]
 
 [dependency-groups]

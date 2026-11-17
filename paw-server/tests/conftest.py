@@ -106,6 +106,7 @@ class Env:
             database_url=self.url,
             owner_token=TOKEN,
             env="ci",
+            deletion_journal_dir=f"/tmp/paw-test-journal-{urlparse(self.url).path.rsplit('/', 1)[-1]}",
             chunk_size=300,
             chunk_overlap=40,
             embedding_batch_size=2,

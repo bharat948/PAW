@@ -65,6 +65,7 @@ def test_create_sends_key_bearer_and_body_and_returns_the_handle():
     assert seen["auth"] == "Bearer k" and seen["idem"] == "paw-1"
     assert seen["body"] == {
         "input": "hi",
+        "session_id": "paw-1",
         "instructions": "be brief",
         "conversation_history": [{"role": "user", "content": "a"}],
     }
@@ -72,7 +73,7 @@ def test_create_sends_key_bearer_and_body_and_returns_the_handle():
 
 def test_create_omits_optional_fields_and_reads_the_replayed_header():
     def h(req):
-        assert json.loads(req.content) == {"input": "hi"}
+        assert json.loads(req.content) == {"input": "hi", "session_id": "p"}
         return httpx.Response(202, json={"run_id": "R1"}, headers={"Idempotency-Replayed": "true"})
 
     assert adapter(h).create_run(run_id="p", input="hi").replayed is True
@@ -145,6 +146,13 @@ def test_create_rejects_non_json_responses():
 
 
 # ---- stream_events ----------------------------------------------------------------------------------------------
+
+
+def test_queued_runtime_run_is_known_and_can_be_recovered():
+    a = adapter(lambda r: httpx.Response(200, json={"run_id": "R", "status": "queued"}))
+    snapshot = a.get_run("R")
+    assert snapshot.status == "queued"
+    assert not snapshot.terminal
 
 
 def test_stream_yields_ordered_events_and_stops_at_the_terminal_event():

@@ -5,6 +5,13 @@ set -euo pipefail
 : "${API_SERVER_KEY:?API_SERVER_KEY is required (>= 32 random chars)}"
 [ "${#API_SERVER_KEY}" -ge 32 ] || { echo "API_SERVER_KEY must be at least 32 characters" >&2; exit 1; }
 
+# Model proxy mode (PAW-002A A1): every model call goes through the PAW model proxy, which holds the provider key.
+# The runtime must then hold no provider key at all, so a misconfiguration cannot fall back to calling the provider.
+if [ -n "${PAW_MODEL_PROXY_URL:-}" ]; then
+  : "${PAW_MODEL_PROXY_TOKEN:?PAW_MODEL_PROXY_TOKEN is required with PAW_MODEL_PROXY_URL}"
+  [ -z "${OPENAI_API_KEY:-}${OPENROUTER_API_KEY:-}" ] || { echo "provider keys must not be present when the model proxy is used" >&2; exit 1; }
+fi
+
 mkdir -p "$HERMES_HOME"
 umask 077
 {
@@ -20,6 +27,10 @@ umask 077
 if [ -n "${HERMES_CONFIG_SET:-}" ]; then
   IFS=';' read -ra pairs <<< "$HERMES_CONFIG_SET"
   for kv in "${pairs[@]}"; do hermes config set "${kv%%=*}" "${kv#*=}"; done
+fi
+# Model proxy credential (A1): a PAW-scoped token, not a provider key. Provider and base_url arrive in HERMES_CONFIG_SET.
+if [ -n "${PAW_MODEL_PROXY_URL:-}" ]; then
+  hermes config set model.api_key "$PAW_MODEL_PROXY_TOKEN"
 fi
 # MCP server (S0 stub now, the PAW gateway in 002D). Written between markers so every start replaces it.
 #   PAW_MCP_URL, PAW_MCP_TOKEN (static bearer), PAW_MCP_TRUST (full|untrusted, default full), PAW_MCP_INCLUDE (csv)

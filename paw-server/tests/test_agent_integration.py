@@ -281,7 +281,7 @@ def test_worker_sends_the_pae_run_id_instructions_and_prior_turns_as_history(h):
     ]
 
 
-def test_failed_and_interrupted_runs_are_not_part_of_the_history(h):
+def test_failed_runs_remain_in_history_with_their_failed_outcome(h):
     s = h.session()
     h.send(s, message="bad turn")
     h.rt.script = lambda hid: [("run.failed", {"error": "boom"})]
@@ -289,7 +289,10 @@ def test_failed_and_interrupted_runs_are_not_part_of_the_history(h):
     h.send(s, message="next")
     h.rt.script = lambda hid: [completed("ok")]
     h.worker.run_once()
-    assert h.rt.created[1]["history"] == []
+    assert h.rt.created[1]["history"] == [
+        {"role": "user", "content": "bad turn"},
+        {"role": "assistant", "content": "Run ended: failed."},
+    ]
 
 
 def test_runtime_reported_failure_is_failed(h):
@@ -432,7 +435,7 @@ def test_restart_recovery_interrupts_orphaned_runs_and_keeps_partial_output(h, e
     assert (r["state"], r["output"], r["error_code"]) == (
         "INTERRUPTED",
         "partial",
-        "worker_restart",
+        "runtime_missing",
     )
     assert sql(env, "SELECT count(*) FROM agent_run_leases") == [(0,)]
     assert h.worker.recover() == 0
@@ -622,3 +625,92 @@ def test_reaper_leaves_other_states_alone(h):
     queued = h.send(h.session())
     assert h.worker.reap() == 0
     assert h.run(queued["id"])["state"] == "QUEUED" and h.run(running["id"])["state"] == "RUNNING"
+
+
+# ---- run deadlines (A1-08) ---------------------------------------------------------------------------------------
+
+
+def test_the_deadline_is_set_once_from_the_profile_and_survives_a_worker_restart(h, env):
+    run = h.send(h.session())
+    h.worker.run_once()
+    [(secs, first)] = sql(
+        env,
+        "SELECT extract(epoch FROM deadline_at - started_at), deadline_at FROM agent_runs WHERE id = %s",
+        run["id"],
+    )
+    assert 599 <= secs <= 601  # the default profile's max_run_seconds
+    AgentWorker(h.pool, h.rt, h.settings).recover()
+    assert sql(env, "SELECT deadline_at FROM agent_runs WHERE id = %s", run["id"]) == [(first,)]
+
+
+def _expired(h, env):
+    run = _running(h)
+    sql(
+        env,
+        "UPDATE agent_runs SET deadline_at = now() - interval '1 second' WHERE id = %s",
+        run["id"],
+    )
+    return run
+
+
+def test_a_run_before_its_deadline_is_left_alone(h, env):
+    run = _running(h)
+    sql(
+        env,
+        "UPDATE agent_runs SET deadline_at = now() + interval '1 hour' WHERE id = %s",
+        run["id"],
+    )
+    assert h.worker.expire_deadlines() == 0 and h.rt.stopped == []
+    assert h.run(run["id"])["state"] == "RUNNING"
+
+
+def test_an_expired_run_is_asked_to_stop_once_and_keeps_the_reason(h, env):
+    run = _expired(h, env)
+    assert h.worker.expire_deadlines() == 1 and h.rt.stopped == ["hermes-1"]
+    r = h.run(run["id"])
+    assert (r["state"], r["error_code"]) == ("CANCELLING", "deadline_exceeded")
+    assert h.worker.expire_deadlines() == 0 and h.rt.stopped == ["hermes-1"]  # idempotent
+    with h.pool.connection() as conn:
+        lc.finish(
+            conn,
+            UUID(run["id"]),
+            "CANCELLED",
+            event_type="run.cancelled",
+            payload={},
+            output="partial",
+        )
+    r = h.run(run["id"])
+    assert (r["state"], r["error_code"], r["output"]) == (
+        "CANCELLED",
+        "deadline_exceeded",
+        "partial",
+    )
+
+
+def test_an_expired_run_whose_stop_is_never_confirmed_ends_interrupted_with_its_partial_output(env):
+    h = Harness(env, agent_stop_deadline_s=1)
+    run = _expired(h, env)
+    with h.pool.connection() as conn:
+        lc.append_event(conn, UUID(run["id"]), "message.delta", {"text": "so far"}, "hermes-1:0")
+    assert h.worker.expire_deadlines() == 1
+    time.sleep(1.2)
+    assert h.worker.reap() == 1
+    r = h.run(run["id"])
+    assert (r["state"], r["error_code"], r["output"]) == (
+        "INTERRUPTED",
+        "deadline_exceeded",
+        "so far",
+    )
+    assert sql(env, "SELECT count(*) FROM agent_run_leases") == [(0,)]
+    h.pool.close()
+
+
+def test_a_failed_stop_request_still_leaves_the_run_cancelling_for_the_stop_deadline(h, env):
+    run = _expired(h, env)
+
+    def broken(hid):
+        raise RuntimeError("runtime down")
+
+    h.rt.stop_run = broken
+    assert h.worker.expire_deadlines() == 1
+    assert h.run(run["id"])["state"] == "CANCELLING"

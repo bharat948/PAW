@@ -33,6 +33,8 @@ mkdir -p ~/.config/paw && umask 077
   echo "PAW_MCP_INCLUDE=paw_echo, paw_write_note, paw_slow"
 } > ~/.config/paw/s0.env
 ```
+The Hermès container never receives this key. `./dev.sh` keeps it on the host for the PAW model proxy and gives the container only a
+separate proxy token (`~/.config/paw/model-proxy.token`). The container refuses to start if it is handed a provider key together with the proxy.
 Never commit this file or paste it anywhere: it holds your OpenAI key. Use a dedicated OpenAI project key with a monthly budget.
 
 ## 3. Start, check, stop

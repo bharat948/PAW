@@ -1,5 +1,7 @@
 # PAW-002 development plan and S0 status
 
+Current status (2026-11-04): this is the historical S0 baseline. Production runtime, identity, gateway and durable-conversation code now exist. Use [current phase status](plan-next.md) and [002B evidence](implementation-002b.md); the original spike notes below are retained as history.
+
 Spec: `PAW_002_Admin_Hermes_Harness_Requirements_v2.docx` (v2.0, 2026-10-29). Branch: `paw-002-admin-hermes`.
 Per-phase engineering plans: [phase-plans.md](phase-plans.md).
 Audience: Bharat (owner) and whoever runs the spike. Written 2026-11-02.

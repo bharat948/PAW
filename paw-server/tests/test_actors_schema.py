@@ -37,7 +37,11 @@ def _set(c, vid, status):
 
 def test_seeded_actors(conn):
     rows = conn.execute("SELECT id, kind, display_name FROM actors ORDER BY id").fetchall()
-    assert rows == [("admin-hermes", "agent", "Admin Hermès"), ("owner", "human", "Bharat")]
+    assert rows == [
+        ("admin-hermes", "agent", "Admin Hermès"),
+        ("owner", "human", "Bharat"),
+        ("system", "system", "PAW"),
+    ]
 
 
 def test_actor_kind_and_status_are_constrained(conn):

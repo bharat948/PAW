@@ -10,6 +10,13 @@ const run = (over: Record<string, unknown> = {}) => ({
   id: 'run-1', session_id: 'sess-1', client_request_id: 'c1', message: 'hello', state: 'QUEUED', output: null,
   error_code: null, usage: null, queued_at: 't', started_at: null, finished_at: null, ...over,
 })
+const view = (over: Record<string, string> = {}) => ({ confirmed_usd: '0.012000000', reserved_usd: '0', unconfirmed_usd: '0', limit_usd: '3', ...over })
+const spendBody = (actor: Record<string, string> = {}, shared: Record<string, string> = {}) => ({
+  day: '2026-11-05', resets_at: '2026-11-05T18:30:00+00:00', actor: view(actor), shared: view(shared),
+})
+const cost = (over: Record<string, unknown> = {}) => ({
+  status: 'confirmed', confirmed_usd: '0.002500000', reserved_usd: '0', unconfirmed_usd: '0', served_model: 'gpt-4o-mini', rate_versions: ['v'], ...over,
+})
 const ev = (seq: number, type: string, payload: Record<string, unknown> = {}) => ({ seq, type, payload })
 const sse = (events: ReturnType<typeof ev>[]) =>
   new Response(events.map((e) => `id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(''), {
@@ -31,9 +38,12 @@ function api(handlers: Handler[]) {
   return calls
 }
 const base: Handler = (url) => {
+  if (url.endsWith('/v1/agent-sessions')) return Response.json({ sessions: [] })
+  if (url.includes('/messages?')) return Response.json({ messages: [], next_after: null, summaries: [], children: [], summary_job: null })
   if (url.includes('/v1/auth/config')) return Response.json({ mode: 'google', google: true })
   if (url.includes('/v1/auth/me')) return Response.json(session)
   if (url.includes('/v1/runtime/health')) return Response.json({ configured: true, ready: true, missing: [] })
+  if (url.endsWith('/v1/agent-spend')) return Response.json(spendBody())
 }
 
 beforeEach(() => {
@@ -258,4 +268,73 @@ it('tells the owner to restart Hermès when its container does not match the pro
   api([(u) => (u.includes('/v1/runtime/health') ? Response.json({ configured: true, ready: false, missing: ['config_mismatch'], config: 'mismatch' }) : undefined), base])
   render(<App />)
   expect(await screen.findByText(/does not match its profile/i)).toBeInTheDocument()
+})
+
+
+it('shows today\'s spending with confirmed money apart from held money', async () => {
+  api([
+    (u) => (u.endsWith('/v1/agent-spend') ? Response.json(spendBody({ confirmed_usd: '0.5', reserved_usd: '0.25', unconfirmed_usd: '0.25' }, { confirmed_usd: '1', reserved_usd: '0.25', unconfirmed_usd: '0.25' })) : undefined),
+    base,
+  ])
+  render(<App />)
+  const panel = (await screen.findByText(/spending today/i)).closest('details')!
+  expect(panel).toHaveTextContent('$0.50 confirmed of $3.00')
+  expect(panel).toHaveTextContent('$0.25 held')
+  await userEvent.click(screen.getByText(/spending today/i))
+  expect(within(panel).getAllByText(/of which \$0\.25 may or may not have been billed/i)).toHaveLength(2)
+  expect(within(panel).getByText(/held money counts against the limit/i)).toBeInTheDocument()
+})
+
+it('shows a run\'s cost and never calls an unconfirmed amount settled', async () => {
+  window.localStorage.setItem('paw.agent.session', 'sess-1')
+  api([
+    (u) => (u.endsWith('/v1/agent-sessions/sess-1/runs')
+      ? Response.json({ runs: [run({ state: 'INTERRUPTED', output: 'half', error_code: 'stream_lost', cost: cost({ status: 'unconfirmed', reserved_usd: '0.01', unconfirmed_usd: '0.01' }) })] })
+      : undefined),
+    base,
+  ])
+  render(<App />)
+  const line = await screen.findByLabelText(/run cost/i)
+  expect(line).toHaveTextContent('$0.0025 confirmed')
+  expect(line).toHaveTextContent('$0.01 held (may or may not have been billed)')
+})
+
+it('shows nothing about cost when a run has none recorded, instead of $0', async () => {
+  window.localStorage.setItem('paw.agent.session', 'sess-1')
+  api([
+    (u) => (u.endsWith('/v1/agent-sessions/sess-1/runs') ? Response.json({ runs: [run({ state: 'INTERRUPTED', output: 'half', cost: cost({ status: 'unknown', confirmed_usd: null, reserved_usd: null, unconfirmed_usd: null }) })] }) : undefined),
+    base,
+  ])
+  render(<App />)
+  expect(await screen.findByText('half')).toBeInTheDocument()
+  expect(screen.queryByLabelText(/run cost/i)).not.toBeInTheDocument()
+})
+
+it('says a run hit its time limit rather than a generic interruption', async () => {
+  window.localStorage.setItem('paw.agent.session', 'sess-1')
+  api([
+    (u) => (u.endsWith('/v1/agent-sessions/sess-1/runs') ? Response.json({ runs: [run({ state: 'INTERRUPTED', output: 'so far', error_code: 'deadline_exceeded' })] }) : undefined),
+    base,
+  ])
+  render(<App />)
+  expect(await screen.findByText('so far')).toBeInTheDocument()
+  expect(screen.getByText(/time limit reached\. what was written is kept/i)).toBeInTheDocument()
+})
+
+it('explains that summarising is waiting for the daily budget', async () => {
+  window.localStorage.setItem('paw.agent.session', 'sess-1')
+  api([
+    (u) => (u.includes('/messages?') ? Response.json({ messages: [], next_after: null, summaries: [], children: [], summary_job: { state: 'pending', error_code: 'budget_deferred' } }) : undefined),
+    (u) => (u.endsWith('/v1/agent-sessions/sess-1/runs') ? Response.json({ runs: [] }) : undefined),
+    base,
+  ])
+  render(<App />)
+  expect(await screen.findByText(/summarising waits for the daily budget to reset/i)).toBeInTheDocument()
+})
+
+it('keeps chatting when the spending read fails', async () => {
+  api([(u) => (u.endsWith('/v1/agent-spend') ? Response.json(envelope('server_error'), { status: 500 }) : undefined), base])
+  render(<App />)
+  expect(await screen.findByLabelText(/message admin hermès/i)).toBeEnabled()
+  expect(screen.queryByText(/spending today/i)).not.toBeInTheDocument()
 })

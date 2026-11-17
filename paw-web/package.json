@@ -12,6 +12,7 @@
     "test:e2e": "playwright test",
     "check": "npm run lint && npm run typecheck && npm run test",
     "preview": "vite preview",
+    "test:ledger": "playwright test -c playwright.ledger.config.ts",
     "test:live": "playwright test -c playwright.live.config.ts"
   },
   "dependencies": {

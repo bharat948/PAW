@@ -15,13 +15,22 @@ from paw_server.modules.gateway.attestation import config_hash
 from paw_server.modules.identity import service as identity
 
 
-def render(fragment: dict[str, object], provider: str = "openai-api") -> list[str]:
+def render(
+    fragment: dict[str, object], provider: str = "openai-api", proxy_url: str = ""
+) -> list[str]:
+    """With a proxy URL the runtime holds no provider key: it talks to the PAW model proxy as a custom provider
+    (the entrypoint adds the proxy token from the environment)."""
     include = ", ".join(str(t) for t in fragment["mcp_include"])  # type: ignore[attr-defined]
-    return [
-        f"PAW_MCP_INCLUDE={include}",
-        f"HERMES_CONFIG_SET=model.provider={provider};model.default={fragment['model']};agent.max_turns={fragment['max_iterations']}",
-        f"PAW_CONFIG_HASH={config_hash(fragment)}",
-    ]
+    model = f"model.default={fragment['model']};agent.max_turns={fragment['max_iterations']}"
+    config = (
+        f"model.provider=custom;model.base_url={proxy_url};{model}"
+        if proxy_url
+        else f"model.provider={provider};{model}"
+    )
+    lines = [f"PAW_MCP_INCLUDE={include}", f"HERMES_CONFIG_SET={config}"]
+    if proxy_url:
+        lines.append(f"PAW_MODEL_PROXY_URL={proxy_url}")
+    return [*lines, f"PAW_CONFIG_HASH={config_hash(fragment)}"]
 
 
 def main() -> int:
@@ -38,7 +47,9 @@ def main() -> int:
     print(
         "\n".join(
             render(
-                active.compiled.config_fragment, os.environ.get("PAW_HERMES_PROVIDER", "openai-api")
+                active.compiled.config_fragment,
+                os.environ.get("PAW_HERMES_PROVIDER", "openai-api"),
+                os.environ.get("PAW_MODEL_PROXY_URL", ""),
             )
         )
     )

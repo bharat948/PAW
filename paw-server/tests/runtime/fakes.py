@@ -1,7 +1,7 @@
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from paw_server.modules.runtime.protocol import RunHandle, RuntimeError_, RuntimeEvent
+from paw_server.modules.runtime.protocol import RunHandle, RunSnapshot, RuntimeError_, RuntimeEvent
 
 
 def delta(text: str) -> tuple[str, dict[str, Any]]:
@@ -48,6 +48,8 @@ class FakeRuntime:
 
     def stream_events(self, hermes_run_id: str, after_seq: int = -1) -> Iterator[RuntimeEvent]:
         for i, (t, p) in enumerate(self.script(hermes_run_id)):
+            if i <= after_seq:
+                continue
             if self.between_events:
                 self.between_events(i)
             yield RuntimeEvent(t, p, f"{hermes_run_id}:{i}")
@@ -62,3 +64,8 @@ class FakeRuntime:
 
     def healthy(self) -> bool:
         return True
+
+    def get_run(self, hermes_run_id: str) -> RunSnapshot:
+        if not any("h-" + r["run_id"] == hermes_run_id for r in self.created):
+            raise RuntimeError_("not_found")
+        return RunSnapshot("running")
