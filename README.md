@@ -19,6 +19,13 @@ curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/ready
 ```
 
+`/health` confirms the API process is responding. `/ready` confirms PostgreSQL is reachable and the database schema is current. If readiness fails after startup, inspect the service status and logs from the repository root:
+
+```bash
+docker compose -f paw-server/compose.yaml ps -a
+docker compose -f paw-server/compose.yaml logs --tail=50 migrate api
+```
+
 Upload a small text or Markdown file in **Documents**, wait for its status to reach **Completed**, then look for a phrase from the file in **Search** and open its source. Stop the stack with `docker compose -f paw-server/compose.yaml down`. The database and document volumes persist.
 
 ## Features on main
