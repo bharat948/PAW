@@ -1,23 +1,50 @@
 # PAW
 
-Personal agent workspace. Current milestone: **PAW 001 – Cloud RAG Foundation**.
+PAW is a personal agent workspace for ingesting documents, finding source passages, and working with an Admin Hermès agent. The FastAPI server and background workers use PostgreSQL with pgvector for application state and SeaweedFS for local S3-compatible document storage. The web app uses React, TypeScript, and Vite.
 
-- `paw-server/`: FastAPI API, Postgres + pgvector, ingestion worker
-- `paw-web/`: React + Vite + TypeScript web app
+## Quick start
 
-Monorepo for now (CI per directory); see each README. Local runtime: `cd paw-server && make up`.
+Start Docker with the Compose v2 plugin. From a fresh checkout, run:
 
-## Local development (hot reload, no app containers)
-
-```
-./dev.sh          # infra in Docker (Postgres + S3), then API :8000, worker, and web :5173 with hot reload
-./dev.sh stop     # also stop the Docker infra
+```bash
+git clone https://github.com/bharat948/PAW.git
+cd PAW
+docker compose -f paw-server/compose.yaml up --build -d
 ```
 
-Edit `paw-server/src` or `paw-web/src` and both sides reload. Settings come from `paw-server/.env` and
-`paw-web/.env` (created from the `.env.example` files on first run; add your embedding key there).
-Sign in at http://localhost:5173 with `PAW_OWNER_TOKEN`. Individual pieces: `make -C paw-server run|worker|migrate|dev-infra`
-and `npm run dev` in `paw-web`.
+Open [PAW](http://localhost:8080) and sign in with the local-only token `paw_local_only_owner_token`. Compose runs database migrations before starting the API and ingestion worker. The default local embedding and answer providers use test implementations and require no API key.
 
-Notes: running the dev setup stops the `api`/`worker`/`web` containers (same ports). SeaweedFS can take ~10 s on its
-first write after starting, so the very first upload may be slow. `make up` still runs the whole stack in Docker.
+```bash
+curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8000/ready
+```
+
+Upload a small text or Markdown file in **Documents**, wait for its status to reach **Completed**, then look for a phrase from the file in **Search** and open its source. Stop the stack with `docker compose -f paw-server/compose.yaml down`. The database and document volumes persist.
+
+## Features on main
+
+| Feature | What you can do |
+| --- | --- |
+| Documents | Upload text-based PDF, text, Markdown, CSV, TSV, JSON, or JSONL. Track background processing and retrieve original files. |
+| Search and Ask | Run hybrid keyword and vector search, inspect source passages, and stream grounded answers with citations. Configure a real provider for model-generated answers. |
+| Admin Hermès | With the optional runtime configured, run streaming agent chats, stop runs, and inspect tool outcomes. The versioned actor profile controls the model, permitted tools, and run limits. |
+| Google integration | Configure Google sign-in for the home stack. Connect Google Calendar to read upcoming events through the Integrations page and, when granted, through the Hermès gateway. |
+| Home deployment | Run the foundation stack with the home Compose file, reverse proxy, and persistent volumes. Follow the environment contract for provisioning, authentication, and migration. |
+
+The Docker quick start runs the document workspace. To enable the agent runtime, follow the [Hermès gateway setup](deploy/hermes/README.md#6-gateway-end-to-end-002d). The [server guide](paw-server/README.md#using-openai-embeddings) covers model and embedding provider configuration.
+
+## Local development
+
+Use Docker Compose v2, Bash, Make, Python 3.12, `uv`, and Node 20.20.2 from [the web app's version file](paw-web/.nvmrc).
+
+```bash
+HERMES=0 ./dev.sh    # Start Postgres and SeaweedFS in Docker and the app with hot reload
+./dev.sh stop        # Stop the development infrastructure
+```
+
+The web app runs at [localhost:5173](http://localhost:5173) and the API docs at [localhost:8000/docs](http://localhost:8000/docs). The script creates local `.env` files from the examples on first run. Sign in with `PAW_OWNER_TOKEN` from `paw-server/.env`.
+
+- [Server setup and tests](paw-server/README.md)
+- [Web setup and tests](paw-web/README.md)
+- [Operations runbook](docs/operations.md)
+- [Home environment contract](docs/environment-contract.md) and [Google sign-in setup](docs/auth-google-setup.md)
